@@ -1,0 +1,11 @@
+.DS_Store
+__pycache__/
+*.pyc
+.env
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+results/output/
+input/enrichment/enrichment_figures/
