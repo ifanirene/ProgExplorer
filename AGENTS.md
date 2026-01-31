@@ -19,6 +19,7 @@ During you interaction with the user, if you find anything generalizable, especi
 - Some conda envs here do not include `bin/activate`; call the env's Python directly if activation script is missing. [Learning and Memory]
 - Pytest may not resolve `tools.*` imports unless `scripts/` is on `sys.path`; tests can append the repo `scripts/` directory. [Learning and Memory]
 - When asked to review a repo, avoid modifying files without explicit approval; perform a read-only review first. [Learning and Memory]
+- When asked to update references, search the repo and update all occurrences before responding. [Learning and Memory]
 
 ## Environment Management
 - conda activate /Volumes/IF_PHAGE/conda_envs/perturb2 and use it for python tasks.
