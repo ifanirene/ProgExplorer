@@ -16,17 +16,17 @@ Process:
 6. OUTPUT: JSON (for LLM context) + CSV (for user verification).
 
 @dependencies
-- tools.ncbi_api
+- ncbi_api
 - pandas
 - BioC-JSON parsing logic
 
 @examples
-python tools/topic_annotation_with_literature/fetch_ncbi_data.py \
-    --input data/Hypoxia/p2_HnN_loading_gene_k30.csv \
+python pipeline/02_fetch_ncbi_data.py \
+    --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
     --context "endothelial OR endothelium" \
-    --csv-out results/output/ncbi_literature_summary.csv \
-    --json-out results/output/ncbi_context_batch.json \
-    --api-key $NCBI_API_KEY
+    --csv-out results/output/ncbi_context.csv \
+    --json-out results/output/ncbi_context.json \
+    --api-key "$NCBI_API_KEY"
 """
 
 import re

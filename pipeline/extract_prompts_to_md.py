@@ -2,9 +2,9 @@
 Extract prompts from batch request JSON and save as markdown files.
 
 Usage:
-    python tools/topic_annotation_workflow/extract_prompts_to_md.py \
-        results/output/topic_annotations/fb_k100_prompt_batch_programs_1_6.json \
-        results/output/topic_annotations/prompts_preview
+    python pipeline/extract_prompts_to_md.py \
+        results/output/llm_batches/batch_request.json \
+        results/output/llm_batches/prompts_preview
 """
 
 import argparse

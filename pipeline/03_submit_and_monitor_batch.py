@@ -16,13 +16,13 @@
  *
  * @examples
  * - Prepare prompts only:
- *   python tools/topic_annotation_workflow/02_submit_and_monitor_batch.py prepare \
- *     --gene-file data/Topic_analysis_k100_new/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
- *     --celltype-dir results/output/program_celltype_annotations \
- *     --celltype-dir results/output/program_celltype_annotations \
- *     --enrichment-file results/output/string_enrichment_k100_top300/string_enrichment_filtered_process_kegg.csv \
- *     --ncbi-file results/output/ncbi_context_batch.json \
- *     --output-file results/output/topic_annotations/fb_k100_prompt_batch.json
+ *   python pipeline/03_submit_and_monitor_batch.py prepare \
+ *     --gene-file input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+ *     --celltype-dir input/celltype \
+ *     --enrichment-file input/enrichment/string_enrichment_filtered_process_kegg.csv \
+ *     --ncbi-file results/output/ncbi_context.json \
+ *     --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \
+ *     --output-file results/output/llm_batches/batch_request.json
  * 
  *     # (Note: --ncbi-file is optional but recommended if literature data was fetched)
  */

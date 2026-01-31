@@ -20,29 +20,29 @@
  * 
  * @examples
  * - Extract top 100 genes per program (RowID or program_id column):
- *   python tools/topic_annotation_workflow/genes_to_string_enrichment.py extract \
- *     --input data/Hypoxia/p2_HnN_loading_gene_k30.csv \
+ *   python pipeline/01_genes_to_string_enrichment.py extract \
+ *     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
  *     --n-top 100 \
- *     --json-out results/output/topic_annotations/hnn_k30_top100_genes.json \
- *     --csv-out results/output/topic_annotations/hnn_k30_top100_genes_overview.csv
+ *     --json-out results/output/genes_top100.json \
+ *     --csv-out results/output/genes_overview_top100.csv
  * 
  * - Run enrichment and figures:
- *   python tools/topic_annotation_workflow/genes_to_string_enrichment.py enrich \
- *     --genes-json results/output/topic_annotations/hnn_k30_top100_genes.json \
+ *   python pipeline/01_genes_to_string_enrichment.py enrich \
+ *     --genes-json results/output/genes_top100.json \
  *     --species 10090 \
- *     --out-csv-full results/output/topic_annotations/hnn_k30_string_full.csv \
- *     --out-csv-filtered results/output/topic_annotations/hnn_k30_string_process_kegg_filtered_bg500.csv \
- *     --figures-dir results/output/topic_annotations/enrichment_figures
+ *     --out-csv-full results/output/string_enrichment/string_enrichment_full.csv \
+ *     --out-csv-filtered results/output/string_enrichment/string_enrichment_filtered_process_kegg.csv \
+ *     --figures-dir results/output/string_enrichment/enrichment_figures
  * 
  * - End-to-end:
- *   python tools/topic_annotation_workflow/genes_to_string_enrichment.py all \
- *     --input data/Hypoxia/p2_HnN_loading_gene_k30.csv \
+ *   python pipeline/01_genes_to_string_enrichment.py all \
+ *     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
  *     --n-top 100 \
- *     --json-out results/output/topic_annotations/hnn_k30_top100_genes.json \
- *     --csv-out results/output/topic_annotations/hnn_k30_top100_genes_overview.csv \
+ *     --json-out results/output/genes_top100.json \
+ *     --csv-out results/output/genes_overview_top100.csv \
  *     --species 10090 \
- *     --out-csv-full results/output/topic_annotations/hnn_k30_string_full.csv \
- *     --out-csv-filtered results/output/topic_annotations/hnn_k30_string_process_kegg_filtered_bg500.csv
+ *     --out-csv-full results/output/string_enrichment/string_enrichment_full.csv \
+ *     --out-csv-filtered results/output/string_enrichment/string_enrichment_filtered_process_kegg.csv
  */
 """
 

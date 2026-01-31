@@ -19,18 +19,18 @@
  * 
  * @examples
  * - End-to-end (parse → summarize):
- *   python tools/topic_annotation_workflow/03_parse_and_summarize.py \
- *     --results-jsonl results/output/topic_annotations/hypoxia_k30/batch_results.jsonl \
- *     --markdown-dir results/output/topic_annotations/hypoxia_k30/annotations \
- *     --summary-csv results/output/topic_annotations/hypoxia_k30/topic_summary.csv \
- *     --gene-loading-file data/Hypoxia/p2_HnN_loading_gene_k30.csv
+ *   python pipeline/04_parse_and_summarize.py \
+ *     --results-jsonl results/output/annotations/batch_results.jsonl \
+ *     --markdown-dir results/output/annotations \
+ *     --summary-csv results/output/annotations/summary.csv \
+ *     --gene-loading-file input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv
  * 
  * - Parse only:
- *   python tools/topic_annotation_workflow/03_parse_and_summarize.py \
+ *   python pipeline/04_parse_and_summarize.py \
  *     --results-jsonl <results.jsonl> --markdown-dir <md_dir> --no-summary
  * 
  * - Summarize only (assumes markdown files already exist):
- *   python tools/topic_annotation_workflow/03_parse_and_summarize.py \
+ *   python pipeline/04_parse_and_summarize.py \
  *     --markdown-dir <md_dir> --summary-csv <summary.csv> --no-parse \
  *     --gene-loading-file <genes.csv>
  */
