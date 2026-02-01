@@ -17,7 +17,7 @@
  * @examples
  * - Prepare prompts only:
  *   python pipeline/03_submit_and_monitor_batch.py prepare \
- *     --gene-file input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+ *     --gene-file input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
  *     --celltype-dir input/celltype \
  *     --enrichment-file input/enrichment/string_enrichment_filtered_process_kegg.csv \
  *     --ncbi-file results/output/ncbi_context.json \
@@ -41,6 +41,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Set, Any
 
+import numpy as np
 import pandas as pd
 
 # Vertex AI imports (optional - only needed for submit-vertex/check-vertex commands)
@@ -60,6 +61,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-5-20250929"
+UNKNOWN_FAMILY_ID = "Unknown"
 
 """
 @description
@@ -163,6 +165,73 @@ def apply_config_overrides(
             setattr(args, dest, value)
     return args
 
+# Global uniqueness score helpers
+"""
+@description
+This component ensures global gene uniqueness scores are available for pipeline
+inputs. It normalizes program identifiers and computes TF-IDF-style uniqueness
+when the column is missing.
+
+Key features:
+- Accepts RowID or program_id inputs.
+- Computes UniquenessScore using a global IDF across all programs.
+
+@dependencies
+- numpy: IDF calculation
+- pandas: DataFrame manipulation
+
+@examples
+- df = ensure_program_id_column(df)
+- df = ensure_global_uniqueness(df, logger)
+"""
+
+
+def ensure_program_id_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "program_id" in df.columns:
+        return df
+    if "RowID" not in df.columns:
+        raise ValueError("CSV must have 'program_id' or 'RowID'")
+    updated = df.copy()
+    updated["program_id"] = updated["RowID"]
+    return updated
+
+
+def add_global_uniqueness_scores(df: pd.DataFrame) -> pd.DataFrame:
+    required_cols = {"Name", "Score", "program_id"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        missing_sorted = sorted(missing)
+        raise ValueError(
+            f"CSV missing required columns for uniqueness: {missing_sorted}"
+        )
+
+    updated = df.copy()
+    updated["Score"] = pd.to_numeric(updated["Score"], errors="coerce")
+    updated["program_id"] = pd.to_numeric(updated["program_id"], errors="coerce")
+
+    valid = updated.dropna(subset=["Name", "Score", "program_id"]).copy()
+    if valid.empty:
+        raise ValueError("No valid rows to compute uniqueness scores.")
+
+    valid["program_id"] = valid["program_id"].astype(int)
+    total_programs = valid["program_id"].nunique()
+    gene_counts = valid.groupby("Name")["program_id"].nunique().astype(float)
+    idf = np.log((total_programs + 1.0) / (gene_counts + 1.0))
+    valid["UniquenessScore"] = valid["Score"] * valid["Name"].map(idf)
+
+    updated["UniquenessScore"] = np.nan
+    updated.loc[valid.index, "UniquenessScore"] = valid["UniquenessScore"]
+    return updated
+
+
+def ensure_global_uniqueness(
+    df: pd.DataFrame, logger: logging.Logger
+) -> pd.DataFrame:
+    if "UniquenessScore" in df.columns and not df["UniquenessScore"].isna().all():
+        return df
+    logger.info("UniquenessScore missing; computing global uniqueness scores.")
+    return add_global_uniqueness_scores(df)
+
 # Vertex AI Configuration
 VERTEX_PROJECT_ID = "hs-vascular-development"
 VERTEX_LOCATION = "us-east5"
@@ -199,10 +268,16 @@ def load_gene_table(gene_file: Path) -> pd.DataFrame:
     if not gene_file.exists():
         raise FileNotFoundError(f"Gene file not found: {gene_file}")
     df = pd.read_csv(gene_file)
-    required_cols = {"Name", "Score", "program_id", "family_id", "UniquenessScore"}
+    df = ensure_program_id_column(df)
+    required_cols = {"Name", "Score", "program_id"}
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(f"Gene file missing required columns: {missing}")
+    if "family_id" not in df.columns:
+        df = df.copy()
+        df["family_id"] = UNKNOWN_FAMILY_ID
+        logger.info("family_id missing; defaulting to %s.", UNKNOWN_FAMILY_ID)
+    df = ensure_global_uniqueness(df, logger)
     return df
 
 
@@ -625,8 +700,13 @@ def select_program_genes(
 def get_family_context(gene_df: pd.DataFrame, program_id: int) -> Tuple[str, List[int]]:
     program_df = gene_df[gene_df["program_id"] == program_id]
     if program_df.empty:
-        return "NA", []
-    family_id = str(program_df["family_id"].iloc[0])  # type: ignore
+        return UNKNOWN_FAMILY_ID, []
+    if "family_id" in program_df.columns:
+        family_id = str(program_df["family_id"].iloc[0])  # type: ignore
+    else:
+        family_id = UNKNOWN_FAMILY_ID
+    if not family_id or family_id.lower() in {"nan", "none"} or family_id == UNKNOWN_FAMILY_ID:
+        return UNKNOWN_FAMILY_ID, []
     family_programs = (
         gene_df[gene_df["family_id"] == family_id]["program_id"].dropna().astype(int).unique()  # type: ignore
     )
@@ -659,6 +739,7 @@ def generate_prompt(
         return None
 
     family_id, family_programs = get_family_context(gene_df, program_id)
+    family_unknown = family_id == UNKNOWN_FAMILY_ID
     family_programs_str = ", ".join(map(str, family_programs)) if family_programs else "None"
     enrichment_context = build_enrichment_context(
         enrichment_by_program=enrichment_by_program,
@@ -670,9 +751,20 @@ def generate_prompt(
     celltype_context = format_celltype_context(celltype_map, program_id)
     
     allowed_genes = set()
-    # For singleton families, use only top 30 loading genes (no unique genes)
-    if not family_programs:
-        # Take top 30 loading genes
+    if family_unknown:
+        gene_context = (
+            f"Top-loading genes (top {len(top_loading_genes)}):\n"
+            f"{', '.join(top_loading_genes)}"
+        )
+        if unique_genes:
+            gene_context += (
+                f"\n\nUnique genes (top {len(unique_genes)} non-overlapping):\n"
+                f"{', '.join(unique_genes)}"
+            )
+        allowed_genes.update(top_loading_genes)
+        allowed_genes.update(unique_genes)
+    elif not family_programs:
+        # For singleton families, use only top 30 loading genes (no unique genes)
         program_df = gene_df[gene_df["program_id"] == program_id].copy()
         all_genes = program_df.sort_values("Score", ascending=False)["Name"].head(30).tolist()  # type: ignore
         gene_context = f"Top-loading genes (top 30):\n{', '.join(all_genes)}"
@@ -1047,7 +1139,10 @@ def build_parser() -> argparse.ArgumentParser:
         )
         p.add_argument(
             "--gene-file",
-            help="Path to gene CSV with columns: Name, Score, program_id, family_id, UniquenessScore",
+            help=(
+                "Path to gene CSV with columns: Name, Score, program_id or RowID. "
+                "family_id optional; UniquenessScore computed if missing."
+            ),
         )
         p.add_argument(
             "--celltype-dir",

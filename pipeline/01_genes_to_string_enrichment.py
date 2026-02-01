@@ -21,28 +21,28 @@
  * @examples
  * - Extract top 100 genes per program (RowID or program_id column):
  *   python pipeline/01_genes_to_string_enrichment.py extract \
- *     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+ *     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
  *     --n-top 100 \
- *     --json-out results/output/genes_top100.json \
- *     --csv-out results/output/genes_overview_top100.csv
+ *     --json-out input/enrichment/genes_top100.json \
+ *     --csv-out input/enrichment/genes_overview_top100.csv
  * 
  * - Run enrichment and figures:
  *   python pipeline/01_genes_to_string_enrichment.py enrich \
- *     --genes-json results/output/genes_top100.json \
+ *     --genes-json input/enrichment/genes_top100.json \
  *     --species 10090 \
- *     --out-csv-full results/output/string_enrichment/string_enrichment_full.csv \
- *     --out-csv-filtered results/output/string_enrichment/string_enrichment_filtered_process_kegg.csv \
- *     --figures-dir results/output/string_enrichment/enrichment_figures
+ *     --out-csv-full input/enrichment/string_enrichment_full.csv \
+ *     --out-csv-filtered input/enrichment/string_enrichment_filtered_process_kegg.csv \
+ *     --figures-dir input/enrichment/enrichment_figures
  * 
  * - End-to-end:
  *   python pipeline/01_genes_to_string_enrichment.py all \
- *     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+ *     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
  *     --n-top 100 \
- *     --json-out results/output/genes_top100.json \
- *     --csv-out results/output/genes_overview_top100.csv \
+ *     --json-out input/enrichment/genes_top100.json \
+ *     --csv-out input/enrichment/genes_overview_top100.csv \
  *     --species 10090 \
- *     --out-csv-full results/output/string_enrichment/string_enrichment_full.csv \
- *     --out-csv-filtered results/output/string_enrichment/string_enrichment_filtered_process_kegg.csv
+ *     --out-csv-full input/enrichment/string_enrichment_full.csv \
+ *     --out-csv-filtered input/enrichment/string_enrichment_filtered_process_kegg.csv
  */
 """
 
@@ -174,6 +174,84 @@ def apply_config_overrides(
         if hasattr(args, dest):
             setattr(args, dest, value)
     return args
+
+
+DEFAULT_ENRICH_DIR = Path("input/enrichment")
+DEFAULT_GENES_JSON_TEMPLATE = "genes_top{n_top}.json"
+DEFAULT_GENES_OVERVIEW_TEMPLATE = "genes_overview_top{n_top}.csv"
+DEFAULT_STRING_FULL = "string_enrichment_full.csv"
+DEFAULT_STRING_FILTERED = "string_enrichment_filtered_process_kegg.csv"
+
+"""
+@description
+Default output path resolver for the STRING enrichment CLI.
+It is responsible for filling in output paths when CLI args are omitted
+so the pipeline can run from a single input CSV.
+
+Key features:
+- Defaults enrichment outputs to input/enrichment/
+- Uses n_top to name gene list outputs
+- Honors explicit CLI/config values
+
+@dependencies
+- pathlib: Path composition for defaults
+"""
+
+
+def apply_default_paths(args: argparse.Namespace) -> argparse.Namespace:
+    n_top = getattr(args, "n_top", None) or 100
+
+    if hasattr(args, "json_out") and not getattr(args, "json_out", None):
+        args.json_out = str(DEFAULT_ENRICH_DIR / DEFAULT_GENES_JSON_TEMPLATE.format(n_top=n_top))
+    if hasattr(args, "csv_out") and not getattr(args, "csv_out", None):
+        args.csv_out = str(DEFAULT_ENRICH_DIR / DEFAULT_GENES_OVERVIEW_TEMPLATE.format(n_top=n_top))
+    if hasattr(args, "out_csv_full") and not getattr(args, "out_csv_full", None):
+        args.out_csv_full = str(DEFAULT_ENRICH_DIR / DEFAULT_STRING_FULL)
+    if hasattr(args, "out_csv_filtered") and not getattr(args, "out_csv_filtered", None):
+        args.out_csv_filtered = str(DEFAULT_ENRICH_DIR / DEFAULT_STRING_FILTERED)
+
+    return args
+
+
+"""
+@description
+Helpers for caching STRING enrichment results per program.
+They are responsible for reading and writing cached JSON payloads to avoid
+re-querying STRING for previously processed programs.
+
+Key features:
+- Simple per-program JSON cache files
+- Graceful fallback when cache is missing or invalid
+
+@dependencies
+- json: read/write cached enrichment payloads
+- pathlib: cache path handling
+"""
+
+
+def cache_path(cache_dir: Path, program_id: int) -> Path:
+    return cache_dir / f"program_{program_id}_enrichment.json"
+
+
+def load_cached_results(cache_dir: Path, program_id: int) -> Optional[List[Dict[str, Any]]]:
+    cache_file = cache_path(cache_dir, program_id)
+    if not cache_file.exists():
+        return None
+    try:
+        data = json.loads(cache_file.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        logger.warning("Cache file is invalid JSON: %s", cache_file)
+        return None
+    if not isinstance(data, list):
+        logger.warning("Cache file has unexpected format: %s", cache_file)
+        return None
+    return data
+
+
+def write_cached_results(cache_dir: Path, program_id: int, results: List[Dict[str, Any]]) -> None:
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_file = cache_path(cache_dir, program_id)
+    cache_file.write_text(json.dumps(results, indent=2), encoding="utf-8")
 
 
 # --------------------------- Extract top genes (CSV) --------------------------
@@ -349,6 +427,13 @@ def cmd_enrich(args: argparse.Namespace) -> int:
     if not args.genes_json:
         logger.error("--genes-json is required.")
         return 2
+    if args.figures_only and not args.figures_dir:
+        logger.error("--figures-dir is required when --figures-only is set.")
+        return 2
+    if not args.figures_only and (not args.out_csv_full or not args.out_csv_filtered):
+        logger.error("--out-csv-full and --out-csv-filtered are required unless --figures-only is set.")
+        return 2
+
     genes_path = Path(args.genes_json)
     if not genes_path.exists():
         logger.error(f"Genes JSON not found: {genes_path}")
@@ -364,30 +449,96 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         }
     logger.info(f"Loaded gene lists for {len(program_to_genes)} programs from {genes_path}")
 
+    existing_full_df: Optional[pd.DataFrame] = None
+    existing_programs: Set[int] = set()
+    if args.resume and not args.figures_only and args.out_csv_full:
+        existing_full_path = Path(args.out_csv_full)
+        if existing_full_path.exists():
+            try:
+                existing_full_df = pd.read_csv(existing_full_path)
+                if "program_id" in existing_full_df.columns:
+                    existing_programs = set(
+                        existing_full_df["program_id"].dropna().astype(int).tolist()
+                    )
+                logger.info(
+                    "Resume enabled: found %d programs in existing full CSV.",
+                    len(existing_programs),
+                )
+            except Exception as exc:
+                logger.warning("Failed to read existing full CSV: %s", exc)
+
+    cache_dir = Path(args.cache_dir) if args.cache_dir else None
+    if cache_dir:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
     program_to_results: Dict[str, List[Dict[str, Any]]] = {}
     total = len(program_to_genes)
     for idx, program_id in enumerate(sorted(program_to_genes.keys(), key=lambda x: int(x)), start=1):
+        program_id_int = int(program_id)
         genes = [g for g in program_to_genes[program_id] if isinstance(g, str) and g.strip()]
-        logger.info(f"[{idx}/{total}] STRING enrichment for program {program_id} with {len(genes)} genes ...")
-        results = call_string_enrichment(genes=genes, species=args.species, retries=args.retries, sleep_between=args.sleep)
-        logger.info(f"Program {program_id}: retrieved {len(results)} enriched terms")
-        program_to_results[program_id] = results
-        time.sleep(args.sleep)
+        skip_enrichment = (
+            args.resume and not args.force_refresh and program_id_int in existing_programs
+        )
 
-    if args.out_csv_full:
-        out_csv_full_path = Path(args.out_csv_full)
-        df_full = build_full_csv(program_to_results)
-        out_csv_full_path.parent.mkdir(parents=True, exist_ok=True)
-        df_full.to_csv(out_csv_full_path, index=False)
-        logger.info(f"Wrote full unfiltered CSV with {len(df_full)} rows to {out_csv_full_path}")
+        results: Optional[List[Dict[str, Any]]] = None
+        if not args.figures_only and not skip_enrichment:
+            if cache_dir and not args.force_refresh:
+                results = load_cached_results(cache_dir, program_id_int)
+                if results is not None:
+                    logger.info(
+                        "Program %s: using cached enrichment results (%d terms).",
+                        program_id,
+                        len(results),
+                    )
+            if results is None:
+                logger.info(
+                    "[%d/%d] STRING enrichment for program %s with %d genes ...",
+                    idx,
+                    total,
+                    program_id,
+                    len(genes),
+                )
+                results = call_string_enrichment(
+                    genes=genes,
+                    species=args.species,
+                    retries=args.retries,
+                    sleep_between=args.sleep,
+                )
+                logger.info("Program %s: retrieved %d enriched terms", program_id, len(results))
+                if cache_dir:
+                    write_cached_results(cache_dir, program_id_int, results)
+                time.sleep(args.sleep)
 
-    if args.out_csv_filtered:
-        out_csv_filtered_path = Path(args.out_csv_filtered)
+        if not args.figures_only and results is not None and not skip_enrichment:
+            program_to_results[program_id] = results
+
+    if not args.figures_only:
         df_full = build_full_csv(program_to_results)
-        df_filtered = filter_process_kegg(df_full)
-        out_csv_filtered_path.parent.mkdir(parents=True, exist_ok=True)
-        df_filtered.to_csv(out_csv_filtered_path, index=False)
-        logger.info(f"Wrote filtered CSV (Process/KEGG) with {len(df_filtered)} rows to {out_csv_filtered_path}")
+        if existing_full_df is not None:
+            df_full = pd.concat([existing_full_df, df_full], ignore_index=True)
+        if not df_full.empty:
+            df_full.sort_values(["program_id", "fdr", "p_value"], inplace=True)
+
+        if args.out_csv_full:
+            out_csv_full_path = Path(args.out_csv_full)
+            out_csv_full_path.parent.mkdir(parents=True, exist_ok=True)
+            df_full.to_csv(out_csv_full_path, index=False)
+            logger.info(
+                "Wrote full unfiltered CSV with %d rows to %s",
+                len(df_full),
+                out_csv_full_path,
+            )
+
+        if args.out_csv_filtered:
+            out_csv_filtered_path = Path(args.out_csv_filtered)
+            df_filtered = filter_process_kegg(df_full)
+            out_csv_filtered_path.parent.mkdir(parents=True, exist_ok=True)
+            df_filtered.to_csv(out_csv_filtered_path, index=False)
+            logger.info(
+                "Wrote filtered CSV (Process/KEGG) with %d rows to %s",
+                len(df_filtered),
+                out_csv_filtered_path,
+            )
 
     # Optional: retrieve enrichment figures from STRING API
     if args.figures_dir:
@@ -403,23 +554,26 @@ def cmd_enrich(args: argparse.Namespace) -> int:
         ) -> bool:
             """
             Download enrichment figure directly from STRING API.
-            
+
             Args:
                 genes: List of gene identifiers
                 species: NCBI taxonomy ID
                 category: Enrichment category (e.g., "Process", "KEGG")
                 output_path: Path to save the figure
                 retries: Number of retry attempts
-                
+
             Returns:
                 True if successful, False otherwise
             """
             if not genes:
                 return False
 
+            if args.resume and output_path.exists():
+                return True
+
             # STRING enrichment figure endpoint
             base_url = "https://string-db.org/api/image/enrichmentfigure"
-            
+
             # Prepare parameters
             identifiers_value = "\r".join(genes)
             params = {
@@ -428,7 +582,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 "category": category,
                 "caller_identity": "topic_analysis_string_enrichment",
             }
-            
+
             attempt = 0
             while attempt <= retries:
                 try:
@@ -442,21 +596,32 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                                 f.write(response.content)
                             return True
                         else:
-                            logger.warning(f"STRING returned non-image content for category {category}: {content_type}")
+                            logger.warning(
+                                "STRING returned non-image content for category %s: %s",
+                                category,
+                                content_type,
+                            )
                             return False
                     else:
-                        logger.warning(f"STRING figure API returned status {response.status_code}")
+                        logger.warning(
+                            "STRING figure API returned status %s", response.status_code
+                        )
                 except requests.RequestException as e:
-                    logger.warning(f"HTTP error downloading figure (attempt {attempt+1}/{retries+1}): {e}")
-                
+                    logger.warning(
+                        "HTTP error downloading figure (attempt %d/%d): %s",
+                        attempt + 1,
+                        retries + 1,
+                        e,
+                    )
+
                 attempt += 1
                 time.sleep(min(3.0, 1.0 * (attempt + 1)))
-            
+
             return False
 
         for program_id, genes in program_to_genes.items():
             genes_list = [g for g in genes if isinstance(g, str) and g.strip()]
-            
+
             # Download Process enrichment figure
             ok_p = download_string_enrichment_figure(
                 genes_list,
@@ -464,7 +629,7 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 "Process",
                 figures_dir / f"program_{program_id}_process_enrichment.png",
             )
-            
+
             # Download KEGG enrichment figure
             ok_k = download_string_enrichment_figure(
                 genes_list,
@@ -472,9 +637,14 @@ def cmd_enrich(args: argparse.Namespace) -> int:
                 "KEGG",
                 figures_dir / f"program_{program_id}_kegg_enrichment.png",
             )
-            
-            logger.info(f"Program {program_id}: figures - Process={'✓' if ok_p else '✗'}, KEGG={'✓' if ok_k else '✗'}")
-            
+
+            logger.info(
+                "Program %s: figures - Process=%s, KEGG=%s",
+                program_id,
+                "✓" if ok_p else "✗",
+                "✓" if ok_k else "✗",
+            )
+
             # Add delay between programs to avoid overwhelming the API
             time.sleep(0.5)
 
@@ -512,6 +682,25 @@ def build_parser() -> argparse.ArgumentParser:
     p_enrich.add_argument("--out-csv-full", help="Full unfiltered CSV output path")
     p_enrich.add_argument("--out-csv-filtered", help="Filtered CSV (Process/KEGG only, background<500)")
     p_enrich.add_argument("--figures-dir", help="Directory to save enrichment figures")
+    p_enrich.add_argument(
+        "--figures-only",
+        action="store_true",
+        help="Only download enrichment figures; skip enrichment CSV generation",
+    )
+    p_enrich.add_argument(
+        "--cache-dir",
+        help="Directory to cache per-program STRING enrichment JSON",
+    )
+    p_enrich.add_argument(
+        "--resume",
+        action="store_true",
+        help="Skip programs already present in output CSVs and existing figures",
+    )
+    p_enrich.add_argument(
+        "--force-refresh",
+        action="store_true",
+        help="Ignore cached results and re-query STRING",
+    )
     p_enrich.add_argument("--sleep", type=float, default=0.6, help="Sleep seconds between API calls")
     p_enrich.add_argument("--retries", type=int, default=3, help="Retries per program on HTTP failures")
     p_enrich.add_argument(
@@ -534,6 +723,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_all.add_argument("--out-csv-full")
     p_all.add_argument("--out-csv-filtered")
     p_all.add_argument("--figures-dir")
+    p_all.add_argument("--figures-only", action="store_true")
+    p_all.add_argument("--cache-dir")
+    p_all.add_argument("--resume", action="store_true")
+    p_all.add_argument("--force-refresh", action="store_true")
     p_all.add_argument("--sleep", type=float, default=0.6)
     p_all.add_argument("--retries", type=int, default=3)
     p_all.add_argument(
@@ -552,6 +745,10 @@ def build_parser() -> argparse.ArgumentParser:
             out_csv_full=args.out_csv_full,
             out_csv_filtered=args.out_csv_filtered,
             figures_dir=args.figures_dir,
+            figures_only=args.figures_only,
+            cache_dir=args.cache_dir,
+            resume=args.resume,
+            force_refresh=args.force_refresh,
             sleep=args.sleep,
             retries=args.retries,
             topics=args.topics,
@@ -571,6 +768,7 @@ def main() -> None:
     cli_overrides = get_cli_overrides(sys.argv)
     args = apply_config_overrides(args, config, cli_overrides)
     args = apply_test_mode(args, config, cli_overrides)
+    args = apply_default_paths(args)
     rc = args.func(args)
     raise SystemExit(rc)
 

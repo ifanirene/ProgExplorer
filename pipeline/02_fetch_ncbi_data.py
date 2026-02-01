@@ -22,7 +22,7 @@ Process:
 
 @examples
 python pipeline/02_fetch_ncbi_data.py \
-    --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+    --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
     --context "endothelial OR endothelium" \
     --csv-out results/output/ncbi_context.csv \
     --json-out results/output/ncbi_context.json \
@@ -35,6 +35,7 @@ import json
 import logging
 import time
 import sys
+import numpy as np
 import pandas as pd
 from pathlib import Path
 from typing import List, Dict, Set, Any, Optional
@@ -151,6 +152,73 @@ def apply_config_overrides(
         if hasattr(args, dest):
             setattr(args, dest, value)
     return args
+
+# Global uniqueness score helpers
+"""
+@description
+This component ensures global gene uniqueness scores are available for pipeline
+inputs. It normalizes program identifiers and computes TF-IDF-style uniqueness
+when the column is missing.
+
+Key features:
+- Accepts RowID or program_id inputs.
+- Computes UniquenessScore using a global IDF across all programs.
+
+@dependencies
+- numpy: IDF calculation
+- pandas: DataFrame manipulation
+
+@examples
+- df = ensure_program_id_column(df)
+- df = ensure_global_uniqueness(df, logger)
+"""
+
+
+def ensure_program_id_column(df: pd.DataFrame) -> pd.DataFrame:
+    if "program_id" in df.columns:
+        return df
+    if "RowID" not in df.columns:
+        raise ValueError("CSV must have 'program_id' or 'RowID'")
+    updated = df.copy()
+    updated["program_id"] = updated["RowID"]
+    return updated
+
+
+def add_global_uniqueness_scores(df: pd.DataFrame) -> pd.DataFrame:
+    required_cols = {"Name", "Score", "program_id"}
+    missing = required_cols - set(df.columns)
+    if missing:
+        missing_sorted = sorted(missing)
+        raise ValueError(
+            f"CSV missing required columns for uniqueness: {missing_sorted}"
+        )
+
+    updated = df.copy()
+    updated["Score"] = pd.to_numeric(updated["Score"], errors="coerce")
+    updated["program_id"] = pd.to_numeric(updated["program_id"], errors="coerce")
+
+    valid = updated.dropna(subset=["Name", "Score", "program_id"]).copy()
+    if valid.empty:
+        raise ValueError("No valid rows to compute uniqueness scores.")
+
+    valid["program_id"] = valid["program_id"].astype(int)
+    total_programs = valid["program_id"].nunique()
+    gene_counts = valid.groupby("Name")["program_id"].nunique().astype(float)
+    idf = np.log((total_programs + 1.0) / (gene_counts + 1.0))
+    valid["UniquenessScore"] = valid["Score"] * valid["Name"].map(idf)
+
+    updated["UniquenessScore"] = np.nan
+    updated.loc[valid.index, "UniquenessScore"] = valid["UniquenessScore"]
+    return updated
+
+
+def ensure_global_uniqueness(
+    df: pd.DataFrame, logger: logging.Logger
+) -> pd.DataFrame:
+    if "UniquenessScore" in df.columns and not df["UniquenessScore"].isna().all():
+        return df
+    logger.info("UniquenessScore missing; computing global uniqueness scores.")
+    return add_global_uniqueness_scores(df)
 
 # Domain Constants for Programmatic Scoring
 DOMAIN_KEYWORDS = [
@@ -370,12 +438,8 @@ def load_program_genes(csv_path: Path, top_n_driver: int = 20, top_n_member: int
     """
     df = pd.read_csv(csv_path)
     # Expect columns: program_id (or RowID), Name, Score
-    # Map RowID -> program_id if needed
-    if "program_id" not in df.columns:
-        if "RowID" in df.columns:
-            df["program_id"] = df["RowID"]
-        else:
-            raise ValueError("CSV must have 'program_id' or 'RowID'")
+    df = ensure_program_id_column(df)
+    df = ensure_global_uniqueness(df, logger)
 
     programs = {}
     for pid, group in df.groupby("program_id"):
@@ -1146,7 +1210,10 @@ def validate_program_regulators(
 def main():
     parser = argparse.ArgumentParser(description="Fetch NCBI literature evidence for gene programs")
     parser.add_argument("--config", help="Path to config file (YAML or JSON)")
-    parser.add_argument("--input", help="Loading CSV (Name, Score, program_id)")
+    parser.add_argument(
+        "--input",
+        help="Loading CSV (Name, Score, program_id or RowID; UniquenessScore optional)",
+    )
     parser.add_argument("--csv-out", help="Summary CSV output")
     parser.add_argument("--json-out", help="Full JSON context output")
     parser.add_argument("--context", default='(endothelial OR endothelium OR "vascular endothelial")', help="Context query string")

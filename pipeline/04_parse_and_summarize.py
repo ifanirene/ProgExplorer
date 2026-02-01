@@ -23,7 +23,7 @@
  *     --results-jsonl results/output/annotations/batch_results.jsonl \
  *     --markdown-dir results/output/annotations \
  *     --summary-csv results/output/annotations/summary.csv \
- *     --gene-loading-file input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv
+ *     --gene-loading-file input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv
  * 
  * - Parse only:
  *   python pipeline/04_parse_and_summarize.py \

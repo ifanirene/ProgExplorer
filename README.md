@@ -29,12 +29,15 @@ Utility: `extract_prompts_to_md.py` - Extract prompts to markdown files
 
 This repo ships full inputs under `input/` with a simple layout:
 
-- `input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv`
+- `input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv`
 - `input/regulators/sceptre_discovery_analysis_results.csv`
 - `input/celltype/program_celltype_annotations_summary.csv`
 - `input/enrichment/string_enrichment_filtered_process_kegg.csv`
 - `input/enrichment/enrichment_figures/`
 - `input/volcano/Discovery_FP_moi15_seq2_thresh10_k100_default.csv`
+
+Uniqueness scores are computed automatically if the gene CSV lacks
+`UniquenessScore`, so the pipeline can start from the raw loading file.
 
 ---
 
@@ -59,7 +62,7 @@ Step 5: Generate HTML Report (05_generate_html_report.py)
 ```bash
 # Step 1: STRING enrichment (accepts RowID or program_id)
 python pipeline/01_genes_to_string_enrichment.py all \
-  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --n-top 300 --species 10090 \
   --json-out results/output/genes_top300.json \
   --csv-out results/output/genes_overview.csv \
@@ -68,21 +71,21 @@ python pipeline/01_genes_to_string_enrichment.py all \
 
 # Step 2: Fetch literature context (REQUIRED before batch submission)
 python pipeline/02_fetch_ncbi_data.py \
-  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --csv-out results/output/ncbi_context.csv \
   --json-out results/output/ncbi_context.json \
   --api-key "$NCBI_API_KEY"
 
 # Optional: use Harmonizome gene descriptions instead of NCBI summaries
 python pipeline/02_fetch_ncbi_data.py \
-  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --csv-out results/output/ncbi_context.csv \
   --json-out results/output/ncbi_context.json \
   --gene-summary-source harmonizome
 
 # Step 3: Prepare batch & submit to Vertex AI
 python pipeline/03_submit_and_monitor_batch.py prepare \
-  --gene-file input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+  --gene-file input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --enrichment-file input/enrichment/string_enrichment_filtered_process_kegg.csv \
   --ncbi-file results/output/ncbi_context.json \
   --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \
@@ -104,9 +107,72 @@ python pipeline/05_generate_html_report.py \
   --annotations-dir results/output/annotations \
   --enrichment-dir input/enrichment/enrichment_figures \
   --volcano-csv input/volcano/Discovery_FP_moi15_seq2_thresh10_k100_default.csv \
-  --gene-loading-csv input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv \
+  --gene-loading-csv input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --output-html results/output/annotations/report.html
 ```
+
+---
+
+## Minimal Enrichment (Single Input CSV)
+
+If you only provide the gene loading CSV, Step 1 now defaults its outputs to
+`input/enrichment/` so you can regenerate enrichment inputs in one command:
+
+```bash
+python pipeline/01_genes_to_string_enrichment.py all \
+  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
+  --n-top 300
+```
+
+Defaults produced:
+- `input/enrichment/genes_top300.json`
+- `input/enrichment/genes_overview_top300.csv`
+- `input/enrichment/string_enrichment_full.csv`
+- `input/enrichment/string_enrichment_filtered_process_kegg.csv`
+
+Optional figures:
+```bash
+python pipeline/01_genes_to_string_enrichment.py all \
+  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
+  --n-top 300 \
+  --figures-dir input/enrichment/enrichment_figures
+```
+
+---
+
+## Faster Re-runs (Cache/Resume/Figures-Only)
+
+You can avoid re-calling STRING by caching per-program JSON responses and/or
+resuming from existing output CSVs:
+
+```bash
+python pipeline/01_genes_to_string_enrichment.py enrich \
+  --genes-json input/enrichment/genes_top300.json \
+  --out-csv-full input/enrichment/string_enrichment_full.csv \
+  --out-csv-filtered input/enrichment/string_enrichment_filtered_process_kegg.csv \
+  --cache-dir input/enrichment/string_cache \
+  --resume
+```
+
+Only download figures (skip enrichment CSVs):
+```bash
+python pipeline/01_genes_to_string_enrichment.py enrich \
+  --genes-json input/enrichment/genes_top300.json \
+  --figures-dir input/enrichment/enrichment_figures \
+  --figures-only
+```
+
+Force a fresh STRING query (ignore cache):
+```bash
+python pipeline/01_genes_to_string_enrichment.py enrich \
+  --genes-json input/enrichment/genes_top300.json \
+  --out-csv-full input/enrichment/string_enrichment_full.csv \
+  --out-csv-filtered input/enrichment/string_enrichment_filtered_process_kegg.csv \
+  --cache-dir input/enrichment/string_cache \
+  --force-refresh
+```
+
+Species can be overridden via CLI (`--species 9606`) or config (`species: 9606`).
 
 ---
 
