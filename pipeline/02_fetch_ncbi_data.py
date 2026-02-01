@@ -1221,8 +1221,8 @@ def main():
     parser.add_argument(
         "--gene-summary-source",
         choices=["ncbi", "harmonizome"],
-        default="ncbi",
-        help="Source for gene summaries: ncbi (Entrez) or harmonizome",
+        default="harmonizome",
+        help="Source for gene summaries: harmonizome (default) or ncbi (Entrez)",
     )
     parser.add_argument("--num-programs", type=int, help="Limit number of programs (for testing)")
     parser.add_argument("--topics", type=str, help="Comma-separated list of topic IDs to process (e.g. '6,7,8')")

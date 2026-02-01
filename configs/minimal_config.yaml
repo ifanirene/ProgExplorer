@@ -53,6 +53,6 @@ steps:
     summary_csv: results/output/annotations_subset/summary.csv
     annotations_dir: results/output/annotations_subset
     enrichment_dir: input/enrichment/enrichment_figures
-    volcano_csv: input/volcano/Discovery_FP_moi15_seq2_thresh10_k100_default.csv
+    volcano_csv: input/regulators/sceptre_discovery_analysis_results.csv
     gene_loading_csv: input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv
     output_html: results/output/annotations_subset/report.html

@@ -14,6 +14,7 @@
  * - Robust HTTP with retries and pacing
  * - Full unfiltered CSV and Process/KEGG filtered CSV (<500 background genes)
  * - Direct retrieval of enrichment figures from STRING API
+ * - Writes a global UniquenessScore gene table for downstream steps
  * 
  * @dependencies
  * - pandas, requests
@@ -56,6 +57,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set
 
+import numpy as np
 import pandas as pd
 import requests
 
@@ -301,6 +303,69 @@ def extract_top_genes_by_program(
     return top_map
 
 
+"""
+@description
+This component builds a gene loading table with global UniquenessScore values.
+It is responsible for normalizing program identifiers, computing TF-IDF-style
+uniqueness across all programs, and exporting a table for downstream steps.
+
+Key features:
+- Accepts RowID or program_id inputs.
+- Preserves family_id if available.
+- Computes UniquenessScore when missing.
+
+@dependencies
+- numpy: IDF calculation
+- pandas: DataFrame manipulation
+
+@examples
+- uniqueness_df = build_uniqueness_table(df, id_col="RowID")
+"""
+
+
+def default_uniqueness_output(input_path: Path) -> Path:
+    suffix = input_path.suffix or ".csv"
+    stem = input_path.stem
+    if stem.endswith("_with_uniqueness"):
+        return input_path
+    return input_path.with_name(f"{stem}_with_uniqueness{suffix}")
+
+
+def build_uniqueness_table(df: pd.DataFrame, id_col: str) -> pd.DataFrame:
+    required_cols = {"Name", "Score", id_col}
+    missing = required_cols.difference(df.columns)
+    if missing:
+        raise ValueError(f"Input is missing required columns: {sorted(missing)}")
+
+    work = df.copy()
+    if "program_id" not in work.columns:
+        work["program_id"] = work[id_col]
+
+    if "UniquenessScore" not in work.columns or work["UniquenessScore"].isna().all():
+        work["Score"] = pd.to_numeric(work["Score"], errors="coerce")
+        work["program_id"] = pd.to_numeric(work["program_id"], errors="coerce")
+        valid = work.dropna(subset=["Name", "Score", "program_id"]).copy()
+        if valid.empty:
+            raise ValueError("No valid rows to compute UniquenessScore.")
+
+        valid["program_id"] = valid["program_id"].astype(int)
+        total_programs = valid["program_id"].nunique()
+        gene_counts = valid.groupby("Name")["program_id"].nunique().astype(float)
+        idf = np.log((total_programs + 1.0) / (gene_counts + 1.0))
+        valid["UniquenessScore"] = valid["Score"] * valid["Name"].map(idf)
+
+        work["UniquenessScore"] = np.nan
+        work.loc[valid.index, "UniquenessScore"] = valid["UniquenessScore"]
+
+    columns = ["Name", "Score", "program_id"]
+    if "family_id" in work.columns:
+        columns.append("family_id")
+    columns.append("UniquenessScore")
+    out_df = work[columns].copy()
+    out_df.dropna(subset=["Name", "Score", "program_id", "UniquenessScore"], inplace=True)
+    return out_df
+
+
 def build_overview_long_table(
     df: pd.DataFrame, top_map: Dict[str, List[str]], id_col: str
 ) -> pd.DataFrame:
@@ -336,6 +401,16 @@ def cmd_extract(args: argparse.Namespace) -> int:
     logger.info(f"Loaded input: {input_path} with shape {df.shape} and columns {list(df.columns)}")
 
     id_col = resolve_program_id_column(df)
+    uniqueness_out = args.gene_loading_out or str(default_uniqueness_output(input_path))
+    uniqueness_df = build_uniqueness_table(df, id_col=id_col)
+    ensure_parent_dir(uniqueness_out)
+    uniqueness_df.to_csv(uniqueness_out, index=False)
+    logger.info(
+        "Wrote uniqueness CSV: %s (rows=%s)",
+        uniqueness_out,
+        uniqueness_df.shape[0],
+    )
+
     top_map = extract_top_genes_by_program(df=df, n_top=args.n_top, id_col=id_col)
     allowed_topics = parse_topics(args.topics)
     if allowed_topics:
@@ -668,6 +743,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_extract.add_argument("--json-out", help="Output JSON {program_id: [genes...]}")
     p_extract.add_argument("--csv-out", help="Output overview CSV")
     p_extract.add_argument(
+        "--gene-loading-out",
+        help="Output gene loading CSV with UniquenessScore (default: <input>_with_uniqueness.csv)",
+    )
+    p_extract.add_argument(
         "--topics",
         type=str,
         help="Comma-separated list of program IDs to include (e.g. '1,2,3')",
@@ -718,6 +797,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_all.add_argument("--n-top", type=int, default=100)
     p_all.add_argument("--json-out")
     p_all.add_argument("--csv-out")
+    p_all.add_argument("--gene-loading-out")
     # enrich args
     p_all.add_argument("--species", type=int, default=10090)
     p_all.add_argument("--out-csv-full")

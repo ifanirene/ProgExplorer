@@ -21,6 +21,8 @@ During you interaction with the user, if you find anything generalizable, especi
 - When asked to review a repo, avoid modifying files without explicit approval; perform a read-only review first. [Learning and Memory]
 - When asked to update references, search the repo and update all occurrences before responding. [Learning and Memory]
 - Vertex AI batch outputs land under a `prediction-model-<timestamp>/` subfolder; use that subfolder as `--gcs-prefix` for `pipeline/04_parse_and_summarize.py`. [Learning and Memory]
+- Install `pyyaml` in `/Volumes/IF_PHAGE/conda_envs/perturb2` to enable YAML config parsing for pipeline scripts. [Learning and Memory]
+- Step 1 (STRING enrichment) must generate a gene loading table with UniquenessScore for downstream steps. [Learning and Memory]
 
 ## Environment Management
 - conda activate /Volumes/IF_PHAGE/conda_envs/perturb2 and use it for python tasks.

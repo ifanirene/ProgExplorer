@@ -76,12 +76,15 @@ python pipeline/02_fetch_ncbi_data.py \
   --json-out results/output/ncbi_context.json \
   --api-key "$NCBI_API_KEY"
 
-# Optional: use Harmonizome gene descriptions instead of NCBI summaries
+Default gene summaries come from Harmonizome; set `--gene-summary-source ncbi`
+to use Entrez summaries instead.
+
+# Optional: use NCBI gene descriptions instead of Harmonizome summaries
 python pipeline/02_fetch_ncbi_data.py \
   --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --csv-out results/output/ncbi_context.csv \
   --json-out results/output/ncbi_context.json \
-  --gene-summary-source harmonizome
+  --gene-summary-source ncbi
 
 # Step 3: Prepare batch & submit to Vertex AI
 python pipeline/03_submit_and_monitor_batch.py prepare \
@@ -129,6 +132,7 @@ Defaults produced:
 - `input/enrichment/genes_overview_top300.csv`
 - `input/enrichment/string_enrichment_full.csv`
 - `input/enrichment/string_enrichment_filtered_process_kegg.csv`
+- `input/genes/FB_moi15_seq2_loading_gene_k100_top300_with_uniqueness.csv`
 
 Optional figures:
 ```bash
