@@ -12,7 +12,7 @@ The pipeline requires **3 input files** and runs all steps automatically:
 # Full pipeline run
 python pipeline/run_pipeline.py \
   --gene-loading input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
-  --celltype-annotations input/celltype/program_celltype_annotations_summary.csv \
+  --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \
   --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \
   --output-dir results/output/my_run
 
@@ -44,9 +44,18 @@ python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --topics 5
 
 | File | Description |
 |------|-------------|
-| `input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv` | Gene loading matrix (columns: Name, Score, RowID) |
-| `input/celltype/program_celltype_annotations_summary.csv` | Cell-type annotations summary |
+| `input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv` | Gene loading matrix (columns: Name, Score, RowID or program_id) |
+| `input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv` | Raw cell-type enrichment (columns: cell_type, program, log2_fc_in_vs_out, fdr) |
 | `input/regulators/sceptre_discovery_analysis_results.csv` | SCEPTRE regulator results (Perturb-seq) |
+
+### Column compatibility (key files)
+
+| File | Required columns |
+|------|------------------|
+| Gene loading (`gene_loading`) | `Name`, `Score`, `RowID` **or** `program_id` |
+| Cell-type enrichment (`celltype_enrichment`) | `cell_type`, `program` (format `Program_<id>`), `log2_fc_in_vs_out`, `fdr` |
+| STRING enrichment outputs | `program_id`, `category`, `term`, `fdr`, `p_value`, `inputGenes` |
+| Cell-type summary (auto-generated) | `program`, `highly_cell_type_specific`, `moderately_enriched`, `weakly_enriched`, `significantly_lower_expression` |
 
 ---
 
@@ -57,7 +66,7 @@ Edit `configs/pipeline_config.yaml`:
 ```yaml
 input:
   gene_loading: input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv
-  celltype_annotations: input/celltype/program_celltype_annotations_summary.csv
+  celltype_enrichment: input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv
   regulator_file: input/regulators/sceptre_discovery_analysis_results.csv
 
 output_dir: results/output/pipeline_run
@@ -184,6 +193,7 @@ results/output/my_run/
 ├── genes_top.json                     # Program → gene list mapping
 ├── genes_overview.csv                 # Gene loading overview
 ├── gene_loading_with_uniqueness.csv   # Gene table with UniquenessScore
+├── celltype_summary.csv               # Auto-generated cell-type summary
 ├── literature_context.json            # Gene summaries & literature evidence
 ├── string_enrichment/
 │   ├── enrichment_full.csv           # All STRING enrichment terms
@@ -202,11 +212,13 @@ results/output/my_run/
 
 ## Prerequisites
 
-- Python environment with: `pandas`, `requests`, `numpy`, `markdown`, `pyyaml`, `anthropic`
+- Python environment with: `pandas`, `requests`, `numpy`, `markdown`, `pyyaml`, `anthropic`, `matplotlib`, `seaborn`, `tqdm`, `pillow`
 - Google Cloud SDK (only for Vertex AI batch submission)
 - API keys in `.env`:
   - `ANTHROPIC_API_KEY` (required for Anthropic backend)
   - `NCBI_API_KEY` (optional, increases PubMed throughput)
+
+Recommended env spec: `configs/environment.yaml` (conda) covers core pipeline deps and optional Vertex AI support.
 
 ---
 

@@ -1,0 +1,27 @@
+name: progexplorer
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - pandas
+  - numpy
+  - requests
+  - tqdm
+  - matplotlib
+  - seaborn
+  - pillow
+  - markdown
+  - pyyaml
+  - anthropic
+  # Optional: Vertex AI / Google GenAI support
+  - google-genai
+  - google-cloud-storage
+  # Plotting/report utilities
+  - jinja2
+  - beautifulsoup4
+
+  # Pip-only fallbacks (if conda packages unavailable)
+  - pip
+  - pip:
+      - google-auth
+      - google-api-core
