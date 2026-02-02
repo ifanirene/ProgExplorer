@@ -1,67 +1,72 @@
 # Topic Annotation Pipeline
 
-Automated pipeline for gene program annotation using LLM-based analysis with STRING enrichment and literature evidence.
-
----
+Automated pipeline for annotating gene programs using LLM analysis, STRING enrichment, and literature evidence.
 
 ## Quick Start
 
-The pipeline requires **3 input files** and runs all steps automatically:
+Run the full pipeline with a configuration file:
 
 ```bash
-# Full pipeline run
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+```
+
+Or specify inputs directly:
+
+```bash
 python pipeline/run_pipeline.py \
   --gene-loading input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
   --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \
   --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \
   --output-dir results/output/my_run
+```
 
-# Or use the config file
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+Test with specific topics (faster):
 
-# Test with specific topics (faster)
+```bash
 python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --topics 5,6,8,11,18
 ```
 
----
+## Prerequisites
 
-## Pipeline Steps
+### Environment Setup
 
-| Step | Name | Description |
-|------|------|-------------|
-| 1 | `string_enrichment` | Extract top genes, run STRING enrichment |
-| 2 | `literature_fetch` | Fetch gene summaries & PubMed literature (25 papers/program) |
-| 3a | `batch_prepare` | Prepare LLM batch request |
-| 3b | `batch_submit` | Submit to Anthropic Batch API (default) or Vertex AI |
-| 4 | `parse_results` | Parse LLM responses, generate summary |
-| 5 | `html_report` | Generate interactive HTML report |
+Install dependencies using conda:
 
----
+```bash
+conda env create -f configs/environment.yaml
+conda activate progexplorer
+```
+
+Or manually install: `pandas`, `requests`, `numpy`, `markdown`, `pyyaml`, `anthropic`, `matplotlib`, `seaborn`, `tqdm`, `pillow`
+
+### API Keys
+
+Set environment variables in `.env`:
+
+- `ANTHROPIC_API_KEY` (required for LLM annotations)
+- `NCBI_API_KEY` (optional, increases PubMed rate limits)
+
+### Optional: Vertex AI
+
+For Vertex AI backend instead of Anthropic:
+- Install Google Cloud SDK
+- Configure appropriate GCP permissions
 
 ## Required Inputs
 
-3 files are required:
+The pipeline needs 3 input files:
 
-| File | Description |
-|------|-------------|
-| `input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv` | Gene loading matrix (columns: Name, Score, RowID or program_id) |
-| `input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv` | Raw cell-type enrichment (columns: cell_type, program, log2_fc_in_vs_out, fdr) |
-| `input/regulators/sceptre_discovery_analysis_results.csv` | SCEPTRE regulator results (Perturb-seq) |
+| File | Description | Required Columns |
+|------|-------------|------------------|
+| **Gene loading** | Gene loading matrix from cNMF or similar | `Name`, `Score`, `RowID` or `program_id` |
+| **Cell-type enrichment** | Raw cell-type enrichment results | `cell_type`, `program`, `log2_fc_in_vs_out`, `fdr` |
+| **Regulator file** | SCEPTRE or Perturb-seq regulator results | Standard SCEPTRE output format |
 
-### Column compatibility (key files)
-
-| File | Required columns |
-|------|------------------|
-| Gene loading (`gene_loading`) | `Name`, `Score`, `RowID` **or** `program_id` |
-| Cell-type enrichment (`celltype_enrichment`) | `cell_type`, `program` (format `Program_<id>`), `log2_fc_in_vs_out`, `fdr` |
-| STRING enrichment outputs | `program_id`, `category`, `term`, `fdr`, `p_value`, `inputGenes` |
-| Cell-type summary (auto-generated) | `program`, `highly_cell_type_specific`, `moderately_enriched`, `weakly_enriched`, `significantly_lower_expression` |
-
----
+**Note**: `program` column must use format `Program_<id>` (e.g., `Program_5`).
 
 ## Configuration
 
-Edit `configs/pipeline_config.yaml`:
+Edit `configs/pipeline_config.yaml` to set inputs and parameters:
 
 ```yaml
 input:
@@ -71,193 +76,144 @@ input:
 
 output_dir: results/output/pipeline_run
 
-# Limit to specific topics (null = all)
-topics: null
-
-# Species for STRING-DB (10090 = mouse, 9606 = human)
-species: 10090
-
-# Literature search context
+topics: null  # null = all topics, or list specific: [5, 6, 8, 11, 18]
+species: 10090  # 10090 = mouse, 9606 = human
 context: '(endothelial OR endothelium OR "vascular endothelial")'
 
-# LLM settings
-llm_backend: anthropic           # "anthropic" (default) or "vertex"
+llm_backend: anthropic  # "anthropic" or "vertex"
 llm_model: claude-4-sonnet-20250514
 llm_max_tokens: 8192
-llm_wait: true                   # Wait for batch completion
-
-# Gene summary options
-# full_summaries: true           # Use full HTML summaries (~3x longer)
+llm_wait: true  # Wait for batch to complete
 ```
 
----
+## Pipeline Steps
 
-## LLM Backend Options
+The pipeline runs 6 steps automatically:
 
-### Anthropic Batch API (Default, Recommended)
+1. **String enrichment** - Extract top genes, compute UniquenessScore, run STRING enrichment, generate cell-type summary
+2. **Literature fetch** - Fetch Harmonizome gene summaries and PubMed literature (25 papers/program)
+3. **Batch prepare** - Generate LLM prompts with all evidence
+4. **Batch submit** - Submit to Anthropic or Vertex AI batch API
+5. **Parse results** - Extract LLM annotations and generate summary
+6. **HTML report** - Create interactive HTML report with figures
 
-Uses Anthropic's native Batch API directly. Faster and simpler for most use cases.
+## Partial Pipeline Runs
+
+Stop at a specific step:
 
 ```bash
-# Automatic via pipeline
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+# Prepare batch without submitting
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --stop-after batch_prepare
+```
 
-# Manual submission
+Resume from a specific step:
+
+```bash
+# Resume from parsing (Anthropic)
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --start-from parse_results
+
+# Resume from parsing (Vertex AI - requires GCS prefix)
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml \
+  --start-from parse_results \
+  --gcs-prefix gs://bucket/batch/prediction-model-<timestamp>/
+```
+
+Available step names: `string_enrichment`, `literature_fetch`, `batch_prepare`, `batch_submit`, `parse_results`, `html_report`
+
+## Output Structure
+
+```
+results/output/my_run/
+├── genes_top.json                      # Program → gene list mapping
+├── gene_loading_with_uniqueness.csv    # Gene table with UniquenessScore
+├── celltype_summary.csv                # Auto-generated cell-type summary
+├── literature_context.json             # Gene summaries & literature
+├── string_enrichment/
+│   ├── enrichment_filtered.csv         # Process/KEGG enrichment terms
+│   └── figures/                        # Enrichment bar charts (PNG)
+├── llm_batches/
+│   ├── batch_request.json              # LLM prompts
+│   └── batch_request_results.jsonl     # LLM responses
+└── annotations/
+    ├── topic_*_annotation.md           # Per-topic annotations
+    ├── summary.csv                     # Topic names and summaries
+    └── report.html                     # Interactive HTML report
+```
+
+## Advanced Options
+
+### Use Full Gene Summaries
+
+By default, short Harmonizome descriptions are used. For longer summaries with PMID references:
+
+```yaml
+full_summaries: true  # In config
+```
+
+Or:
+
+```bash
+python pipeline/02_fetch_ncbi_data.py ... --full-summaries
+```
+
+### Switch LLM Backend
+
+**Anthropic (default):**
+
+```yaml
+llm_backend: anthropic
+```
+
+```bash
+# Manual batch operations
 python pipeline/03_submit_and_monitor_batch.py submit batch_request.json --wait
-
-# Check status
 python pipeline/03_submit_and_monitor_batch.py check --batch-id <BATCH_ID>
-
-# Download results
 python pipeline/03_submit_and_monitor_batch.py results --batch-id <BATCH_ID>
 ```
 
-**Required**: `ANTHROPIC_API_KEY` environment variable.
-
-### Vertex AI (Alternative)
-
-Uses Google Cloud Vertex AI for batch processing.
+**Vertex AI:**
 
 ```yaml
-# In config:
 llm_backend: vertex
 ```
 
 ```bash
-# Manual submission
 python pipeline/03_submit_and_monitor_batch.py submit-vertex batch_request.json --wait
-
-# Check status
 python pipeline/03_submit_and_monitor_batch.py check-vertex --job-name <JOB_NAME>
 ```
 
-**Required**: Google Cloud SDK configured with appropriate permissions.
+### Run Individual Scripts
 
----
-
-## Gene Summary Options
-
-Gene summaries are fetched from **Harmonizome** (curated NCBI-like descriptions).
-
-| Option | Description | Length |
-|--------|-------------|--------|
-| Default | Short API descriptions | ~400-600 chars |
-| `--full-summaries` | Full HTML summaries with PMID references | ~2000+ chars |
-| `--gene-summary-source ncbi` | Direct NCBI Entrez summaries | Variable |
+For debugging or custom workflows, run pipeline steps independently:
 
 ```bash
-# Use full summaries (richer context, slower)
-python pipeline/02_fetch_ncbi_data.py ... --full-summaries
+# Step 1: STRING enrichment + cell-type summary
+python pipeline/01_genes_to_string_enrichment.py all \
+  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
+  --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \
+  --topics 5,6,8
 
-# Or in config:
-full_summaries: true
-```
+# Step 2: Literature fetch
+python pipeline/02_fetch_ncbi_data.py \
+  --input results/output/gene_loading_with_uniqueness.csv \
+  --json-out results/output/literature_context.json \
+  --topics 5,6,8
 
----
-
-## Partial Runs
-
-Run specific steps:
-
-```bash
-# Stop after preparing batch (steps 1-3a, no submission)
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --stop-after batch_prepare
-
-# Resume from parsing - Anthropic (local results file)
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml \
-  --start-from parse_results \
-  --results-file results/output/my_run/llm_batches/batch_request_results.jsonl
-
-# Resume from parsing - Vertex AI (GCS prefix)
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml \
-  --start-from parse_results \
-  --gcs-prefix gs://perturbseq/batch/prediction-model-2024...
-```
-
-Available steps for `--start-from` and `--stop-after`:
-- `string_enrichment`
-- `literature_fetch`
-- `batch_prepare`
-- `batch_submit`
-- `parse_results`
-- `html_report`
-
----
-
-## Output Structure
-
-All outputs are organized under the specified `output_dir`:
-
-```
-results/output/my_run/
-├── genes_top.json                     # Program → gene list mapping
-├── genes_overview.csv                 # Gene loading overview
-├── gene_loading_with_uniqueness.csv   # Gene table with UniquenessScore
-├── celltype_summary.csv               # Auto-generated cell-type summary
-├── literature_context.json            # Gene summaries & literature evidence
-├── string_enrichment/
-│   ├── enrichment_full.csv           # All STRING enrichment terms
-│   ├── enrichment_filtered.csv       # Filtered (Process/KEGG only)
-│   ├── figures/                      # Enrichment figures (PNG)
-│   └── cache/                        # API response cache
-├── llm_batches/
-│   └── batch_request.json            # LLM batch request payload
-└── annotations/
-    ├── topic_*_annotation.md         # Per-topic markdown files
-    ├── summary.csv                   # Topic names and summaries
-    └── report.html                   # Interactive HTML report
-```
-
----
-
-## Prerequisites
-
-- Python environment with: `pandas`, `requests`, `numpy`, `markdown`, `pyyaml`, `anthropic`, `matplotlib`, `seaborn`, `tqdm`, `pillow`
-- Google Cloud SDK (only for Vertex AI batch submission)
-- API keys in `.env`:
-  - `ANTHROPIC_API_KEY` (required for Anthropic backend)
-  - `NCBI_API_KEY` (optional, increases PubMed throughput)
-
-Recommended env spec: `configs/environment.yaml` (conda) covers core pipeline deps and optional Vertex AI support.
-
----
-
-## Individual Step Scripts
-
-For advanced usage, each step can be run independently:
-
-| Script | Purpose |
-|--------|---------|
-| `pipeline/01_genes_to_string_enrichment.py` | STRING enrichment |
-| `pipeline/02_fetch_ncbi_data.py` | Literature fetching |
-| `pipeline/03_submit_and_monitor_batch.py` | Batch preparation/submission |
-| `pipeline/04_parse_and_summarize.py` | Result parsing |
-| `pipeline/05_generate_html_report.py` | HTML report generation |
-
-Run `python pipeline/<script>.py --help` for detailed options.
-
-### Batch Submission Commands
-
-```bash
-# Prepare batch request only
+# Step 3: Prepare batch
 python pipeline/03_submit_and_monitor_batch.py prepare \
-  --gene-file input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
+  --gene-file results/output/gene_loading_with_uniqueness.csv \
+  --celltype-file results/output/celltype_summary.csv \
   --output-file results/output/batch_request.json
-
-# Submit to Anthropic (default)
-python pipeline/03_submit_and_monitor_batch.py submit batch_request.json --wait
-
-# Submit to Vertex AI (alternative)
-python pipeline/03_submit_and_monitor_batch.py submit-vertex batch_request.json --wait
 ```
 
----
+Use `--help` on any script for full options.
 
-## HTML Report Features
+## Troubleshooting
 
-- **Program stats**: Top-loading genes, unique genes, cell-type enrichment
-- **LLM annotations**: Full markdown with functional modules
-- **Enrichment figures**: KEGG + Process enrichment panels
-- **Interactive volcano plot**: Priority gene labels
-- **Full-text search**: Search across all annotation content
-- **Keyboard navigation**: Arrow keys (←/→) to switch programs
+**Column name errors**: Ensure your gene loading file has `Name`, `Score`, and either `RowID` or `program_id`.
+
+**Cell-type format errors**: The `program` column must use format `Program_<id>` (e.g., `Program_5`, not just `5`).
+
+**API rate limits**: Set `NCBI_API_KEY` for higher PubMed throughput. Anthropic batch API has no rate limits.
+
+**Missing dependencies**: Run `conda env create -f configs/environment.yaml` or manually install packages listed in Prerequisites.
