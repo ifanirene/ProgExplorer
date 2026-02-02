@@ -428,12 +428,17 @@ def extract_evidence_sentences(
 CACHE_DIR = Path("data/cache")
 CACHE_FILE = CACHE_DIR / "ncbi_bioc_cache.json"
 
-def load_program_genes(csv_path: Path, top_n_driver: int = 20, top_n_member: int = 100) -> Dict[int, Dict[str, List[str]]]:
+def load_program_genes(
+    csv_path: Path, 
+    top_n_loading: int = 20, 
+    top_n_unique: int = 10,
+    top_n_member: int = 100
+) -> Dict[int, Dict[str, List[str]]]:
     """
     Load driver and member genes per program.
-    Returns: {program_id: {"drivers": [...], "members": [...]}}
+    Returns: {program_id: {"drivers": [...], "top_loading": [...], "top_unique": [...], "members": [...], "all_genes": [...]}}
     
-    Drivers (Search Query): Top 10 Loading + Top 10 Unique (combined, deduped)
+    Drivers: Top N Loading + Top M Unique (non-overlapping) = exactly N + M genes
     Members (Verification): Top 100 Loading
     """
     df = pd.read_csv(csv_path)
@@ -445,20 +450,22 @@ def load_program_genes(csv_path: Path, top_n_driver: int = 20, top_n_member: int
     for pid, group in df.groupby("program_id"):
         # 1. Top Loading (by Score)
         sorted_loading = group.sort_values("Score", ascending=False)["Name"].astype(str).tolist()
+        top_loading_genes = sorted_loading[:top_n_loading]
+        top_loading_set = set(top_loading_genes)
         
-        # 2. Top Unique (by UniquenessScore) - if available
-        unique_genes = []
+        # 2. Top Unique (by UniquenessScore) - NON-OVERLAPPING with top loading
+        top_unique_genes = []
         if "UniquenessScore" in group.columns:
             sorted_unique = group.sort_values("UniquenessScore", ascending=False)["Name"].astype(str).tolist()
-            # Filter to avoid overlap if desired, or just take top N
-            # User request: "include the top 10 loading genes and also top 10 unique genes as core"
-            unique_genes = sorted_unique[:top_n_driver]
+            # Filter out genes already in top_loading, then take top N
+            for gene in sorted_unique:
+                if gene not in top_loading_set:
+                    top_unique_genes.append(gene)
+                    if len(top_unique_genes) >= top_n_unique:
+                        break
             
-        top_loading_drivers = sorted_loading[:top_n_driver]
-        
-        # Combine drivers (deduplicated)
-        # Order: Loading first, then Unique
-        drivers = list(dict.fromkeys(top_loading_drivers + unique_genes))
+        # Drivers: exactly top_n_loading + top_n_unique genes (no overlap)
+        drivers = top_loading_genes + top_unique_genes
         
         # Members: Top 100 Loading
         members = sorted_loading[:top_n_member]
@@ -468,6 +475,8 @@ def load_program_genes(csv_path: Path, top_n_driver: int = 20, top_n_member: int
         
         programs[int(pid)] = {
             "drivers": drivers,
+            "top_loading": top_loading_genes,
+            "top_unique": top_unique_genes,
             "members": members,
             "all_genes": all_genes  # For STRING regulator validation
         }
@@ -480,6 +489,7 @@ def resolve_gene_summaries(
     program_ids: List[int],
     ncbi_client: NcbiClient,
     harmonizome_client: Optional[HarmonizomeClient] = None,
+    use_full_summaries: bool = False,
 ) -> Dict[int, Dict[str, str]]:
     """
     @description
@@ -530,9 +540,13 @@ def resolve_gene_summaries(
         return program_gene_summaries
 
     if source == "harmonizome":
-        harmonizome_client = harmonizome_client or HarmonizomeClient()
+        harmonizome_client = harmonizome_client or HarmonizomeClient(
+            use_full_summaries=use_full_summaries
+        )
+        summary_type = "full HTML" if use_full_summaries else "short API"
         logger.info(
-            "Fetching Harmonizome summaries for %d unique driver genes...",
+            "Fetching Harmonizome %s summaries for %d unique driver genes...",
+            summary_type,
             len(all_drivers),
         )
         symbol_to_summary = harmonizome_client.get_gene_summaries(
@@ -1224,9 +1238,16 @@ def main():
         default="harmonizome",
         help="Source for gene summaries: harmonizome (default) or ncbi (Entrez)",
     )
+    parser.add_argument(
+        "--full-summaries",
+        action="store_true",
+        help="Fetch full literature-based summaries from Harmonizome HTML pages (~3x longer). "
+             "Default is short API descriptions.",
+    )
     parser.add_argument("--num-programs", type=int, help="Limit number of programs (for testing)")
     parser.add_argument("--topics", type=str, help="Comma-separated list of topic IDs to process (e.g. '6,7,8')")
-    parser.add_argument("--top-driver", type=int, default=20, help="Number of driver genes for search/summaries")
+    parser.add_argument("--top-loading", type=int, default=20, help="Number of top loading genes (default 20)")
+    parser.add_argument("--top-unique", type=int, default=10, help="Number of top unique genes, non-overlapping with loading (default 10)")
     parser.add_argument("--top-member", type=int, default=100, help="Number of member genes for context")
     parser.add_argument("--regulator-file", type=str, help="CSV with regulator perturbation results (grna_target, log_2_fold_change)")
     parser.add_argument("--top-regulators", type=int, default=3, help="Number of top positive/negative regulators to validate (if not using --all-significant)")
@@ -1248,7 +1269,12 @@ def main():
     
     # Load Programs
     logger.info(f"Loading programs from {args.input}...")
-    programs = load_program_genes(Path(args.input), top_n_driver=args.top_driver, top_n_member=args.top_member)
+    programs = load_program_genes(
+        Path(args.input), 
+        top_n_loading=args.top_loading, 
+        top_n_unique=args.top_unique,
+        top_n_member=args.top_member
+    )
     program_ids = sorted(programs.keys())
     
     # Filter by specific topics if requested
@@ -1280,7 +1306,7 @@ def main():
         query = f"({genes_or}) AND {args.context}"
         
         logger.info(f"[Program {pid}] Searching: {query}")
-        pmids = client.search_literature(query, size=20)
+        pmids = client.search_literature(query, size=25)
         logger.info(f"[Program {pid}] Found {len(pmids)} articles")
         
         program_pmid_map[pid] = pmids
@@ -1295,11 +1321,13 @@ def main():
     # =========================================================================
 
     gene_summary_source = args.gene_summary_source
+    use_full_summaries = getattr(args, "full_summaries", False)
     program_gene_summaries = resolve_gene_summaries(
         source=gene_summary_source,
         programs=programs,
         program_ids=program_ids,
         ncbi_client=client,
+        use_full_summaries=use_full_summaries,
     )
 
     # =========================================================================

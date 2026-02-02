@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import re
 import subprocess
 import sys
@@ -43,6 +44,13 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 
 import numpy as np
 import pandas as pd
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not required if env vars are already set
 
 # Vertex AI imports (optional - only needed for submit-vertex/check-vertex commands)
 try:
@@ -56,11 +64,19 @@ except ImportError:
     HttpOptions = None  # type: ignore
     VERTEX_AVAILABLE = False
 
+# Anthropic imports (for direct Anthropic Batch API - default)
+try:
+    import anthropic
+    ANTHROPIC_AVAILABLE = True
+except ImportError:
+    anthropic = None  # type: ignore
+    ANTHROPIC_AVAILABLE = False
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-sonnet-4-5-20250929"
+MODEL = "claude-4-sonnet-20250514"  # Anthropic model name
 UNKNOWN_FAMILY_ID = "Unknown"
 
 """
@@ -1126,6 +1142,207 @@ def cmd_check_vertex(args: argparse.Namespace) -> int:
     return 0
 
 
+# =============================================================================
+# Anthropic Direct Batch API Commands (Default)
+# =============================================================================
+
+def cmd_submit_anthropic(args: argparse.Namespace) -> int:
+    """Submit a batch job to Anthropic Batch API (default).
+    
+    This is the preferred method - uses Anthropic's native Batch API directly.
+    Faster and simpler than Vertex AI for most use cases.
+    """
+    if not ANTHROPIC_AVAILABLE:
+        logger.error("anthropic package not installed. Run: pip install anthropic")
+        return 1
+
+    if not args.batch_file:
+        logger.error("batch_file is required (via CLI or config).")
+        return 1
+    
+    batch_path = Path(args.batch_file)
+    if not batch_path.exists():
+        logger.error(f"Batch file not found: {batch_path}")
+        return 1
+    
+    # Load batch request
+    with open(batch_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    
+    requests_list = data.get("requests", [])
+    if not requests_list:
+        logger.error("No requests found in batch file.")
+        return 1
+    
+    logger.info(f"Loaded {len(requests_list)} requests from {batch_path}")
+    
+    # Convert to Anthropic Batch API format
+    # Anthropic expects: {"custom_id": "...", "params": {"model": ..., "max_tokens": ..., "messages": [...]}}
+    anthropic_requests = []
+    model = args.model or MODEL
+    max_tokens = args.max_tokens or 8192
+    
+    for req in requests_list:
+        custom_id = req.get("custom_id", f"request_{len(anthropic_requests)}")
+        params = req.get("params", {})
+        messages = params.get("messages", [])
+        
+        if not messages:
+            logger.warning(f"Skipping request {custom_id}: no messages")
+            continue
+        
+        anthropic_requests.append({
+            "custom_id": custom_id,
+            "params": {
+                "model": model,
+                "max_tokens": max_tokens,
+                "messages": messages,
+            }
+        })
+    
+    logger.info(f"Submitting {len(anthropic_requests)} requests to Anthropic Batch API...")
+    logger.info(f"  Model: {model}")
+    logger.info(f"  Max tokens: {max_tokens}")
+    
+    # Create Anthropic client (uses ANTHROPIC_API_KEY from environment)
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.error("ANTHROPIC_API_KEY not found in environment. Set it or add to .env file.")
+        return 1
+    
+    client = anthropic.Anthropic(api_key=api_key)
+    
+    # Submit batch
+    batch = client.messages.batches.create(requests=anthropic_requests)
+    
+    print(f"\nBatch created!")
+    print(f"  Batch ID: {batch.id}")
+    print(f"  Status: {batch.processing_status}")
+    print(f"  Requests: {batch.request_counts}")
+    
+    # Save batch ID for later retrieval
+    batch_id_file = batch_path.with_suffix(".batch_id")
+    batch_id_file.write_text(batch.id, encoding="utf-8")
+    logger.info(f"Saved batch ID to {batch_id_file}")
+    
+    if args.wait:
+        print("\nWaiting for batch completion (checking every 30 seconds)...")
+        
+        while batch.processing_status == "in_progress":
+            time.sleep(30)
+            batch = client.messages.batches.retrieve(batch.id)
+            print(f"  Status: {batch.processing_status} | Completed: {batch.request_counts.succeeded}/{batch.request_counts.processing + batch.request_counts.succeeded}")
+        
+        print(f"\nFinal status: {batch.processing_status}")
+        
+        if batch.processing_status == "ended":
+            # Download results
+            output_file = batch_path.with_name(f"{batch_path.stem}_results.jsonl")
+            logger.info(f"Downloading results to {output_file}...")
+            
+            with open(output_file, "w", encoding="utf-8") as f:
+                for result in client.messages.batches.results(batch.id):
+                    f.write(json.dumps(result.model_dump()) + "\n")
+            
+            print(f"SUCCESS! Results saved to: {output_file}")
+            print(f"  Succeeded: {batch.request_counts.succeeded}")
+            print(f"  Errored: {batch.request_counts.errored}")
+        else:
+            print(f"Batch did not complete successfully.")
+            return 3
+    else:
+        print(f"\nCheck status with: python {__file__} check-anthropic --batch-id {batch.id}")
+        print(f"Or retrieve results later with: python {__file__} results-anthropic --batch-id {batch.id}")
+    
+    return 0
+
+
+def cmd_check_anthropic(args: argparse.Namespace) -> int:
+    """Check the status of an Anthropic batch job."""
+    if not ANTHROPIC_AVAILABLE:
+        logger.error("anthropic package not installed. Run: pip install anthropic")
+        return 1
+
+    batch_id = args.batch_id
+    if not batch_id:
+        # Try to read from batch_id file
+        if args.batch_file:
+            batch_id_file = Path(args.batch_file).with_suffix(".batch_id")
+            if batch_id_file.exists():
+                batch_id = batch_id_file.read_text(encoding="utf-8").strip()
+    
+    if not batch_id:
+        logger.error("--batch-id is required (or provide --batch-file with saved .batch_id)")
+        return 1
+    
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.error("ANTHROPIC_API_KEY not found in environment.")
+        return 1
+    
+    client = anthropic.Anthropic(api_key=api_key)
+    batch = client.messages.batches.retrieve(batch_id)
+    
+    print(f"Batch ID: {batch.id}")
+    print(f"Status: {batch.processing_status}")
+    print(f"Created: {batch.created_at}")
+    print(f"Requests:")
+    print(f"  Processing: {batch.request_counts.processing}")
+    print(f"  Succeeded: {batch.request_counts.succeeded}")
+    print(f"  Errored: {batch.request_counts.errored}")
+    print(f"  Canceled: {batch.request_counts.canceled}")
+    
+    if batch.processing_status == "ended":
+        print(f"\nBatch completed! Retrieve results with:")
+        print(f"  python {__file__} results-anthropic --batch-id {batch.id}")
+    
+    return 0
+
+
+def cmd_results_anthropic(args: argparse.Namespace) -> int:
+    """Download results from a completed Anthropic batch job."""
+    if not ANTHROPIC_AVAILABLE:
+        logger.error("anthropic package not installed. Run: pip install anthropic")
+        return 1
+
+    batch_id = args.batch_id
+    if not batch_id:
+        if args.batch_file:
+            batch_id_file = Path(args.batch_file).with_suffix(".batch_id")
+            if batch_id_file.exists():
+                batch_id = batch_id_file.read_text(encoding="utf-8").strip()
+    
+    if not batch_id:
+        logger.error("--batch-id is required")
+        return 1
+    
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.error("ANTHROPIC_API_KEY not found in environment.")
+        return 1
+    
+    client = anthropic.Anthropic(api_key=api_key)
+    batch = client.messages.batches.retrieve(batch_id)
+    
+    if batch.processing_status != "ended":
+        logger.error(f"Batch is still processing: {batch.processing_status}")
+        return 1
+    
+    output_file = Path(args.output or f"batch_{batch_id}_results.jsonl")
+    
+    logger.info(f"Downloading results to {output_file}...")
+    
+    with open(output_file, "w", encoding="utf-8") as f:
+        for result in client.messages.batches.results(batch_id):
+            f.write(json.dumps(result.model_dump()) + "\n")
+    
+    print(f"Results saved to: {output_file}")
+    print(f"  Succeeded: {batch.request_counts.succeeded}")
+    print(f"  Errored: {batch.request_counts.errored}")
+    
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Prepare Anthropic batch request JSON for topic annotations."
@@ -1206,6 +1423,88 @@ def build_parser() -> argparse.ArgumentParser:
     p_prepare = subparsers.add_parser("prepare", help="Build the batch request JSON only")
     add_shared_options(p_prepare)
     p_prepare.set_defaults(func=cmd_prepare)
+
+    # =========================================================================
+    # Anthropic Direct API Commands (Default - Recommended)
+    # =========================================================================
+    
+    # Anthropic submit command (DEFAULT)
+    p_submit = subparsers.add_parser(
+        "submit",
+        help="Submit batch to Anthropic Batch API (default, recommended)"
+    )
+    p_submit.add_argument(
+        "batch_file",
+        nargs="?",
+        help="Path to the prepared batch JSON file"
+    )
+    p_submit.add_argument(
+        "--config",
+        help="Path to config file (YAML or JSON)",
+    )
+    p_submit.add_argument(
+        "--model",
+        default=MODEL,
+        help=f"Model to use (default: {MODEL})"
+    )
+    p_submit.add_argument(
+        "--max-tokens",
+        type=int,
+        default=8192,
+        help="Max tokens for response (default: 8192)"
+    )
+    p_submit.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for job completion and download results"
+    )
+    p_submit.set_defaults(func=cmd_submit_anthropic)
+
+    # Anthropic check command
+    p_check = subparsers.add_parser(
+        "check",
+        help="Check status of Anthropic batch job"
+    )
+    p_check.add_argument(
+        "--batch-id",
+        help="Anthropic batch ID"
+    )
+    p_check.add_argument(
+        "--batch-file",
+        help="Path to batch JSON (will read .batch_id file)"
+    )
+    p_check.add_argument(
+        "--config",
+        help="Path to config file (YAML or JSON)",
+    )
+    p_check.set_defaults(func=cmd_check_anthropic)
+
+    # Anthropic results command
+    p_results = subparsers.add_parser(
+        "results",
+        help="Download results from completed Anthropic batch"
+    )
+    p_results.add_argument(
+        "--batch-id",
+        help="Anthropic batch ID"
+    )
+    p_results.add_argument(
+        "--batch-file",
+        help="Path to batch JSON (will read .batch_id file)"
+    )
+    p_results.add_argument(
+        "--output",
+        help="Output JSONL file path"
+    )
+    p_results.add_argument(
+        "--config",
+        help="Path to config file (YAML or JSON)",
+    )
+    p_results.set_defaults(func=cmd_results_anthropic)
+
+    # =========================================================================
+    # Vertex AI Commands (Alternative)
+    # =========================================================================
 
     # Vertex AI submit command
     p_submit_vertex = subparsers.add_parser(

@@ -1,0 +1,78 @@
+# Pipeline Configuration (Simplified)
+# =====================================
+# 
+# This is a minimal configuration for the topic annotation pipeline.
+# Users only need to specify 2 input files and an output directory.
+# All intermediate files are auto-managed by the pipeline.
+#
+# Usage:
+#   python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+#
+# For partial runs:
+#   python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --stop-after batch_prepare
+#   python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --start-from parse_results --gcs-prefix gs://...
+
+# =============================================================================
+# REQUIRED: Input files (3 files needed)
+# =============================================================================
+input:
+  # Gene loading matrix with columns: Name, Score, RowID (or program_id)
+  gene_loading: input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv
+  
+  # Cell-type annotations summary CSV
+  celltype_annotations: input/celltype/program_celltype_annotations_summary.csv
+  
+  # SCEPTRE regulator results (Perturb-seq analysis)
+  regulator_file: input/regulators/sceptre_discovery_analysis_results.csv
+
+# =============================================================================
+# REQUIRED: Output directory (all results go here)
+# =============================================================================
+output_dir: results/output/pipeline_run
+
+# =============================================================================
+# OPTIONAL: Processing settings
+# =============================================================================
+
+# Limit to specific topic/program IDs (null = process all)
+# topics: [5, 6, 8, 11, 18]
+topics: null
+
+# Species for STRING-DB (10090 = mouse, 9606 = human)
+species: 10090
+
+# Literature search context (for PubMed queries)
+context: '(endothelial OR endothelium OR "vascular endothelial")'
+
+# Gene selection parameters
+n_top_genes: 300      # Top N genes per program for STRING enrichment
+top_loading: 20       # Top loading genes for LLM prompts
+top_unique: 10        # Top unique genes for LLM prompts
+top_enrichment: 3     # Top enrichment terms per category
+genes_per_term: 10    # Genes to show per enrichment term
+
+# Gene summary settings
+# full_summaries: true  # Fetch full literature-based summaries from Harmonizome HTML
+#                       # (~3x longer, includes PMID references). Default is short API summaries.
+
+# =============================================================================
+# OPTIONAL: LLM batch settings
+# =============================================================================
+
+# LLM backend: "anthropic" (default, recommended) or "vertex"
+llm_backend: anthropic
+
+# Model name (Anthropic format)
+llm_model: claude-4-sonnet-20250514
+
+# Max tokens for LLM response
+llm_max_tokens: 8192
+
+# Wait for batch completion (set false for async)
+llm_wait: true
+
+# Vertex AI settings (only used if llm_backend: vertex)
+# vertex_bucket: gs://perturbseq/batch
+
+# Resume from cached API results when possible
+resume: true
