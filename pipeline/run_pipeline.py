@@ -6,12 +6,13 @@ Runs all 5 steps sequentially with a simplified configuration.
 
 Users only need to specify:
 - gene_loading: Path to the gene loading matrix CSV
-- celltype_annotations: Path to cell-type annotations summary CSV  
+- celltype_enrichment: Path to raw cell-type enrichment CSV (summary auto-generated)
+- regulator_file: Path to SCEPTRE regulator results CSV
 - output_dir: Directory for all outputs (intermediates auto-managed)
 
 Key features:
 - Single command to run the entire pipeline
-- Auto-generates all intermediate file paths
+- Auto-generates all intermediate file paths (including cell-type summary)
 - Supports --start-from and --stop-after for partial runs
 - Test mode with --topics to limit to specific programs
 - Resume capability with cached API results
@@ -30,10 +31,11 @@ Key features:
   python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --start-from parse_results
 
 - Test mode (5 topics only):
-  python pipeline/run_pipeline.py \
-    --gene-loading input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
-    --celltype-annotations input/celltype/program_celltype_annotations_summary.csv \
-    --output-dir results/output/test_run \
+  python pipeline/run_pipeline.py \\
+    --gene-loading input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \\
+    --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \\
+    --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \\
+    --output-dir results/output/test_run \\
     --topics 5,6,8,11,18
 """
 
@@ -78,7 +80,7 @@ class PipelineConfig:
     
     User provides:
     - gene_loading: input gene loading CSV
-    - celltype_annotations: cell-type summary CSV
+    - celltype_enrichment: raw cell-type enrichment CSV (auto-generates summary)
     - regulator_file: SCEPTRE regulator results CSV
     - output_dir: base output directory
     
@@ -86,7 +88,7 @@ class PipelineConfig:
     """
     # Required inputs (user must provide these)
     gene_loading: Path
-    celltype_annotations: Path
+    celltype_enrichment: Path  # Raw enrichment file (summary auto-generated)
     regulator_file: Path
     output_dir: Path
     
@@ -121,7 +123,7 @@ class PipelineConfig:
     def __post_init__(self):
         """Generate all intermediate paths from output_dir."""
         self.gene_loading = Path(self.gene_loading)
-        self.celltype_annotations = Path(self.celltype_annotations)
+        self.celltype_enrichment = Path(self.celltype_enrichment)
         self.output_dir = Path(self.output_dir)
         if self.regulator_file:
             self.regulator_file = Path(self.regulator_file)
@@ -137,6 +139,7 @@ class PipelineConfig:
             "enrichment_figures": out / "string_enrichment" / "figures",
             "enrichment_cache": out / "string_enrichment" / "cache",
             "gene_loading_with_uniqueness": out / "gene_loading_with_uniqueness.csv",
+            "celltype_summary": out / "celltype_summary.csv",
             
             # Step 2 outputs
             "ncbi_json": out / "literature_context.json",
@@ -165,12 +168,12 @@ class PipelineConfig:
         if "input" in data:
             input_section = data["input"]
             data["gene_loading"] = input_section.get("gene_loading")
-            data["celltype_annotations"] = input_section.get("celltype_annotations")
+            data["celltype_enrichment"] = input_section.get("celltype_enrichment")
             data["regulator_file"] = input_section.get("regulator_file")
         
         # Filter to only known fields
         known_fields = {
-            "gene_loading", "celltype_annotations", "output_dir",
+            "gene_loading", "celltype_enrichment", "output_dir",
             "regulator_file", "topics", "species", "context",
             "n_top_genes", "top_loading", "top_unique",
             "top_enrichment", "genes_per_term",
@@ -213,6 +216,9 @@ def run_step_1_string_enrichment(config: PipelineConfig) -> bool:
         "--figures-dir", str(config.get_path("enrichment_figures")),
         "--cache-dir", str(config.get_path("enrichment_cache")),
         "--gene-loading-out", str(config.get_path("gene_loading_with_uniqueness")),
+        # Cell-type enrichment -> summary generation
+        "--celltype-enrichment", str(config.celltype_enrichment),
+        "--celltype-summary-out", str(config.get_path("celltype_summary")),
     ]
     
     if config.topics:
@@ -294,10 +300,14 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
     if not gene_input.exists():
         gene_input = config.gene_loading
     
+    # Use the generated celltype summary (output of step 1)
+    celltype_summary = config.get_path("celltype_summary")
+    
     cmd = [
         sys.executable, str(script), "prepare",
         "--gene-file", str(gene_input),
-        "--celltype-dir", str(config.celltype_annotations.parent),
+        "--celltype-file", str(celltype_summary),
+        "--celltype-dir", str(celltype_summary.parent),  # Fallback directory
         "--enrichment-file", str(config.get_path("enrichment_filtered")),
         "--ncbi-file", str(config.get_path("ncbi_json")),
         "--output-file", str(config.get_path("batch_request_json")),
@@ -612,7 +622,8 @@ Examples:
   # Full run with CLI arguments
   python run_pipeline.py \\
     --gene-loading input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \\
-    --celltype-annotations input/celltype/program_celltype_annotations_summary.csv \\
+    --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \\
+    --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \\
     --output-dir results/output/my_run
   
   # Test run with specific topics
@@ -627,10 +638,10 @@ Examples:
     --gcs-prefix gs://perturbseq/batch/prediction-model-2024...
 
 Steps:
-  string_enrichment  Step 1: Extract genes + STRING enrichment
+  string_enrichment  Step 1: Extract genes + STRING enrichment + cell-type summary
   literature_fetch   Step 2: Fetch NCBI/Harmonizome data
   batch_prepare      Step 3a: Prepare LLM batch request
-  batch_submit       Step 3b: Submit to Vertex AI
+  batch_submit       Step 3b: Submit to LLM backend (Anthropic/Vertex)
   parse_results      Step 4: Parse LLM responses
   html_report        Step 5: Generate HTML report
 """
@@ -648,8 +659,8 @@ Steps:
         help="Path to gene loading matrix CSV"
     )
     parser.add_argument(
-        "--celltype-annotations",
-        help="Path to cell-type annotations summary CSV"
+        "--celltype-enrichment",
+        help="Path to raw cell-type enrichment CSV (summary auto-generated)"
     )
     parser.add_argument(
         "--output-dir",
@@ -711,13 +722,13 @@ Steps:
         config = PipelineConfig.from_yaml(Path(args.config))
     else:
         # Require CLI arguments if no config file
-        if not args.gene_loading or not args.celltype_annotations or not args.regulator_file or not args.output_dir:
+        if not args.gene_loading or not args.celltype_enrichment or not args.regulator_file or not args.output_dir:
             parser.error(
-                "Either --config or all of (--gene-loading, --celltype-annotations, --regulator-file, --output-dir) are required"
+                "Either --config or all of (--gene-loading, --celltype-enrichment, --regulator-file, --output-dir) are required"
             )
         config = PipelineConfig(
             gene_loading=Path(args.gene_loading),
-            celltype_annotations=Path(args.celltype_annotations),
+            celltype_enrichment=Path(args.celltype_enrichment),
             regulator_file=Path(args.regulator_file),
             output_dir=Path(args.output_dir),
         )
@@ -725,8 +736,8 @@ Steps:
     # Apply CLI overrides
     if args.gene_loading:
         config.gene_loading = Path(args.gene_loading)
-    if args.celltype_annotations:
-        config.celltype_annotations = Path(args.celltype_annotations)
+    if args.celltype_enrichment:
+        config.celltype_enrichment = Path(args.celltype_enrichment)
     if args.output_dir:
         config.output_dir = Path(args.output_dir)
         config.__post_init__()  # Regenerate paths
@@ -747,8 +758,8 @@ Steps:
     if not config.gene_loading.exists():
         logger.error(f"Gene loading file not found: {config.gene_loading}")
         return 1
-    if not config.celltype_annotations.exists():
-        logger.error(f"Cell-type annotations file not found: {config.celltype_annotations}")
+    if not config.celltype_enrichment.exists():
+        logger.error(f"Cell-type enrichment file not found: {config.celltype_enrichment}")
         return 1
     if not config.regulator_file.exists():
         logger.error(f"Regulator file not found: {config.regulator_file}")

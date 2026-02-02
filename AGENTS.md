@@ -24,6 +24,7 @@ During you interaction with the user, if you find anything generalizable, especi
 - Install `pyyaml` in `/Volumes/IF_PHAGE/conda_envs/perturb2` to enable YAML config parsing for pipeline scripts. [Learning and Memory]
 - Step 1 (STRING enrichment) must generate a gene loading table with UniquenessScore for downstream steps. [Learning and Memory]
 - Harmonizome API `/api/1.0/gene/{symbol}` returns short NCBI-like descriptions; for full literature-based summaries, scrape the HTML page and parse the JSON in `<div class="summary-content">`. [Learning and Memory]
+- Cell-type annotations summary is now generated in pipeline step 1 from `input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv`; raw file uses canonical names (Large-artery, Cycling artery, etc.), so no name map flag is needed. [Learning and Memory]
 
 ## Environment Management
 - conda activate /Volumes/IF_PHAGE/conda_envs/perturb2 and use it for python tasks.

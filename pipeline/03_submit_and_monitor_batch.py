@@ -2,8 +2,8 @@
 /**
  * @description
  * Prepare Anthropic batch request JSON for program annotation prompts.
- * It enriches each program prompt with cell-type annotations, program family
- * context, top-loading genes, unique genes, and STRING enrichment summaries.
+ * It enriches each program prompt with cell-type annotations,
+ * top-loading genes, unique genes, and STRING enrichment summaries.
  *
  * Key features:
  * - Builds prompts only (no submission) for batch requests
@@ -77,7 +77,6 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-4-sonnet-20250514"  # Anthropic model name
-UNKNOWN_FAMILY_ID = "Unknown"
 
 """
 @description
@@ -289,19 +288,26 @@ def load_gene_table(gene_file: Path) -> pd.DataFrame:
     missing = required_cols - set(df.columns)
     if missing:
         raise ValueError(f"Gene file missing required columns: {missing}")
-    if "family_id" not in df.columns:
-        df = df.copy()
-        df["family_id"] = UNKNOWN_FAMILY_ID
-        logger.info("family_id missing; defaulting to %s.", UNKNOWN_FAMILY_ID)
     df = ensure_global_uniqueness(df, logger)
     return df
 
 
-def load_celltype_annotations(celltype_dir: Path) -> Dict[int, Dict[str, List[str]]]:
-    summary_path = celltype_dir / "program_celltype_annotations_summary.csv"
-    if not summary_path.exists():
-        logger.warning("Cell-type summary not found: %s", summary_path)
-        return {}
+def load_celltype_annotations(
+    celltype_dir: Path, celltype_file: Optional[Path] = None
+) -> Dict[int, Dict[str, List[str]]]:
+    # Use explicit file if provided, otherwise look in directory
+    if celltype_file and celltype_file.exists():
+        summary_path = celltype_file
+    else:
+        # Try common filenames in the directory
+        for filename in ["celltype_summary.csv", "program_celltype_annotations_summary.csv"]:
+            candidate = celltype_dir / filename
+            if candidate.exists():
+                summary_path = candidate
+                break
+        else:
+            logger.warning("Cell-type summary not found in: %s", celltype_dir)
+            return {}
 
     df = pd.read_csv(summary_path)
     required_cols = {
@@ -713,24 +719,6 @@ def select_program_genes(
     return top_loading_genes, unique_genes[:top_unique]
 
 
-def get_family_context(gene_df: pd.DataFrame, program_id: int) -> Tuple[str, List[int]]:
-    program_df = gene_df[gene_df["program_id"] == program_id]
-    if program_df.empty:
-        return UNKNOWN_FAMILY_ID, []
-    if "family_id" in program_df.columns:
-        family_id = str(program_df["family_id"].iloc[0])  # type: ignore
-    else:
-        family_id = UNKNOWN_FAMILY_ID
-    if not family_id or family_id.lower() in {"nan", "none"} or family_id == UNKNOWN_FAMILY_ID:
-        return UNKNOWN_FAMILY_ID, []
-    family_programs = (
-        gene_df[gene_df["family_id"] == family_id]["program_id"].dropna().astype(int).unique()  # type: ignore
-    )
-    family_programs = sorted(family_programs.tolist())
-    other_programs = [pid for pid in family_programs if pid != program_id]
-    return family_id, other_programs
-
-
 def generate_prompt(
     program_id: int,
     gene_df: pd.DataFrame,
@@ -754,9 +742,6 @@ def generate_prompt(
         logger.warning("No genes found for Program %s", program_id)
         return None
 
-    family_id, family_programs = get_family_context(gene_df, program_id)
-    family_unknown = family_id == UNKNOWN_FAMILY_ID
-    family_programs_str = ", ".join(map(str, family_programs)) if family_programs else "None"
     enrichment_context = build_enrichment_context(
         enrichment_by_program=enrichment_by_program,
         program_id=program_id,
@@ -766,36 +751,18 @@ def generate_prompt(
     
     celltype_context = format_celltype_context(celltype_map, program_id)
     
-    allowed_genes = set()
-    if family_unknown:
-        gene_context = (
-            f"Top-loading genes (top {len(top_loading_genes)}):\n"
-            f"{', '.join(top_loading_genes)}"
-        )
-        if unique_genes:
-            gene_context += (
-                f"\n\nUnique genes (top {len(unique_genes)} non-overlapping):\n"
-                f"{', '.join(unique_genes)}"
-            )
-        allowed_genes.update(top_loading_genes)
-        allowed_genes.update(unique_genes)
-    elif not family_programs:
-        # For singleton families, use only top 30 loading genes (no unique genes)
-        program_df = gene_df[gene_df["program_id"] == program_id].copy()
-        all_genes = program_df.sort_values("Score", ascending=False)["Name"].head(30).tolist()  # type: ignore
-        gene_context = f"Top-loading genes (top 30):\n{', '.join(all_genes)}"
-        allowed_genes.update(all_genes)
-    else:
-        # For multi-member families, show top-loading and unique genes separately
-        gene_context = (
-            f"Top-loading genes (top {len(top_loading_genes)}):\n"
-            f"{', '.join(top_loading_genes)}\n\n"
-            f"Unique genes (top {len(unique_genes)} non-overlapping):\n"
+    # Build gene context
+    gene_context = (
+        f"Top-loading genes (top {len(top_loading_genes)}):\n"
+        f"{', '.join(top_loading_genes)}"
+    )
+    if unique_genes:
+        gene_context += (
+            f"\n\nUnique genes (top {len(unique_genes)} non-overlapping):\n"
             f"{', '.join(unique_genes)}"
         )
-        allowed_genes.update(top_loading_genes)
-        allowed_genes.update(unique_genes)
-
+    
+    allowed_genes = set(top_loading_genes) | set(unique_genes)
     ncbi_context = format_ncbi_context(ncbi_data, program_id, allowed_genes=allowed_genes)
     
     # Format comprehensive regulator analysis (Perturb-seq + literature)
@@ -806,8 +773,6 @@ def generate_prompt(
 
     return (
         prompt_template.replace("{program_id}", str(program_id))
-        .replace("{family_id}", family_id)
-        .replace("{family_programs}", family_programs_str)
         .replace("{gene_context}", gene_context)
         .replace("{regulator_analysis}", regulator_analysis)
         .replace("{celltype_context}", celltype_context)
@@ -824,10 +789,6 @@ You are a vascular-biology specialist interpreting Topic {program_id}, a gene pr
 ### Goal
 - Provide a specific, evidence-anchored interpretation of Topic {program_id}.
 - Gene lists are primary evidence; enrichment and cell-type context are cross-checks only.
-
-### Program context 
-- Program family: {family_id}
-- Other programs in family: {family_programs} (do not compare directly; not provided)
 
 ### Gene evidence (primary)
 {gene_context}
@@ -883,7 +844,6 @@ Then provide the following sections:
    - **Top-loading genes:** [list from Gene evidence section]
    - **Unique genes:** [list or "None"]
    - **Cell-type enrichment:** [1-sentence summary]
-   - **Program family:** [family id]
 """
 
 
@@ -910,7 +870,8 @@ def cmd_prepare(args: argparse.Namespace) -> int:
         program_ids = program_ids[: args.num_topics]
         logger.info("Limiting to first %s topics for testing.", args.num_topics)
 
-    celltype_map = load_celltype_annotations(Path(args.celltype_dir))
+    celltype_file = Path(args.celltype_file) if args.celltype_file else None
+    celltype_map = load_celltype_annotations(Path(args.celltype_dir), celltype_file)
     enrichment_by_program = prepare_enrichment_mapping(Path(args.enrichment_file))
     ncbi_data = load_ncbi_context(Path(args.ncbi_file) if args.ncbi_file else None)
     regulator_data = load_regulator_data(Path(args.regulator_file) if args.regulator_file else None)
@@ -1358,13 +1319,17 @@ def build_parser() -> argparse.ArgumentParser:
             "--gene-file",
             help=(
                 "Path to gene CSV with columns: Name, Score, program_id or RowID. "
-                "family_id optional; UniquenessScore computed if missing."
+                "UniquenessScore computed if missing."
             ),
         )
         p.add_argument(
             "--celltype-dir",
             default="input/celltype",
             help="Directory containing program cell-type annotation summary CSV",
+        )
+        p.add_argument(
+            "--celltype-file",
+            help="Path to cell-type summary CSV file (overrides --celltype-dir lookup)",
         )
         p.add_argument(
             "--enrichment-file",

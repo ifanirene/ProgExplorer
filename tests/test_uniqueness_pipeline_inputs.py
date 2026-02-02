@@ -30,5 +30,3 @@ def test_load_gene_table_computes_uniqueness(tmp_path):
     assert "program_id" in loaded.columns
     assert "UniquenessScore" in loaded.columns
     assert loaded["UniquenessScore"].notna().any()
-    assert "family_id" in loaded.columns
-    assert (loaded["family_id"] == module.UNKNOWN_FAMILY_ID).all()

@@ -184,6 +184,132 @@ DEFAULT_GENES_OVERVIEW_TEMPLATE = "genes_overview_top{n_top}.csv"
 DEFAULT_STRING_FULL = "string_enrichment_full.csv"
 DEFAULT_STRING_FILTERED = "string_enrichment_filtered_process_kegg.csv"
 
+# ----------------------------- Cell-type summary -----------------------------
+# Thresholds for categorizing cell-type enrichment (FDR < 0.05 required)
+CELLTYPE_THRESHOLDS = {
+    'highly_cell_type_specific': {'log2fc_min': 3.0, 'log2fc_max': None},
+    'moderately_enriched': {'log2fc_min': 1.5, 'log2fc_max': 3.0},
+    'weakly_enriched': {'log2fc_min': 0.5, 'log2fc_max': 1.5},
+    'significantly_lower_expression': {'log2fc_min': None, 'log2fc_max': -0.5},
+}
+
+# Column order for cell-type summary output
+CELLTYPE_CATEGORIES = [
+    'highly_cell_type_specific',
+    'moderately_enriched',
+    'weakly_enriched',
+    'significantly_lower_expression',
+]
+
+
+def generate_celltype_summary(
+    enrichment_file: Path,
+    output_file: Path,
+    thresholds: Optional[Dict[str, Dict[str, Optional[float]]]] = None,
+    fdr_threshold: float = 0.05,
+    topics: Optional[Set[int]] = None,
+) -> int:
+    """Generate cell-type annotations summary from raw enrichment data.
+
+    Reads a cell-type enrichment CSV (e.g., from Seurat/Scanpy marker finding)
+    and categorizes each program's cell-type associations by log2 fold-change.
+
+    Args:
+        enrichment_file: Path to raw enrichment CSV with columns:
+            cell_type, program, log2_fc_in_vs_out, fdr
+        output_file: Path to write summary CSV
+        thresholds: Dict of category -> {log2fc_min, log2fc_max}.
+            Uses CELLTYPE_THRESHOLDS if None.
+        fdr_threshold: FDR cutoff for significance (default: 0.05)
+        topics: Optional set of program IDs to include (None = all)
+
+    Returns:
+        Number of programs written
+
+    Output format:
+        program,highly_cell_type_specific,moderately_enriched,weakly_enriched,significantly_lower_expression
+        Program_1,,,,
+        Program_2,Large-artery,,BBB-high capillary,
+        ...
+
+    Each cell contains pipe-separated cell type names for that category.
+    """
+    if thresholds is None:
+        thresholds = CELLTYPE_THRESHOLDS
+
+    # Read enrichment data
+    df = pd.read_csv(enrichment_file)
+    logger.info(f"Loaded cell-type enrichment: {enrichment_file} ({len(df)} rows)")
+
+    # Validate required columns
+    required_cols = {'cell_type', 'program', 'log2_fc_in_vs_out', 'fdr'}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"Enrichment file missing required columns: {missing}")
+
+    # Extract program ID from "Program_X" format
+    df['program_id'] = df['program'].str.extract(r'Program_(\d+)').astype(int)
+
+    # Filter to requested topics if specified
+    if topics:
+        df = df[df['program_id'].isin(list(topics))].copy()
+        logger.info(f"Filtered to {len(df)} rows for topics: {sorted(topics)}")
+
+    # Filter to significant results
+    df_sig = df[df['fdr'] < fdr_threshold].copy()
+    logger.info(f"Found {len(df_sig)} significant rows (FDR < {fdr_threshold})")
+
+    # Use cell_type values as-is (assume already has correct names)
+    df_sig['cell_type_display'] = df_sig['cell_type']
+
+    # Categorize each row by log2FC thresholds
+    def categorize_row(row: pd.Series) -> Optional[str]:
+        log2fc = row['log2_fc_in_vs_out']
+        for cat, bounds in thresholds.items():
+            min_val = bounds.get('log2fc_min')
+            max_val = bounds.get('log2fc_max')
+            # Check if log2fc falls in this category
+            if min_val is not None and max_val is not None:
+                if min_val <= log2fc < max_val:
+                    return cat
+            elif min_val is not None:
+                if log2fc >= min_val:
+                    return cat
+            elif max_val is not None:
+                if log2fc <= max_val:
+                    return cat
+        return None
+
+    df_sig['category'] = df_sig.apply(categorize_row, axis=1)
+    df_categorized = df_sig.dropna(subset=['category'])
+    logger.info(f"Categorized {len(df_categorized)} rows into enrichment categories")
+
+    # Build summary: for each program, collect cell types per category
+    all_programs = sorted(df['program_id'].unique())
+    records = []
+
+    for pid in all_programs:
+        program_data = df_categorized[df_categorized['program_id'] == pid]
+        row = {'program': f'Program_{pid}'}
+
+        for cat in CELLTYPE_CATEGORIES:
+            cat_data = program_data[program_data['category'] == cat]
+            cell_types = sorted(cat_data['cell_type_display'].unique())
+            row[cat] = '|'.join(cell_types) if cell_types else ''
+
+        records.append(row)
+
+    # Create output DataFrame
+    summary_df = pd.DataFrame(records)
+    summary_df = summary_df[['program'] + CELLTYPE_CATEGORIES]
+
+    # Write output
+    ensure_parent_dir(str(output_file))
+    summary_df.to_csv(output_file, index=False)
+    logger.info(f"Wrote cell-type summary: {output_file} ({len(summary_df)} programs)")
+
+    return len(summary_df)
+
 """
 @description
 Default output path resolver for the STRING enrichment CLI.
@@ -311,7 +437,6 @@ uniqueness across all programs, and exporting a table for downstream steps.
 
 Key features:
 - Accepts RowID or program_id inputs.
-- Preserves family_id if available.
 - Computes UniquenessScore when missing.
 
 @dependencies
@@ -357,10 +482,7 @@ def build_uniqueness_table(df: pd.DataFrame, id_col: str) -> pd.DataFrame:
         work["UniquenessScore"] = np.nan
         work.loc[valid.index, "UniquenessScore"] = valid["UniquenessScore"]
 
-    columns = ["Name", "Score", "program_id"]
-    if "family_id" in work.columns:
-        columns.append("family_id")
-    columns.append("UniquenessScore")
+    columns = ["Name", "Score", "program_id", "UniquenessScore"]
     out_df = work[columns].copy()
     out_df.dropna(subset=["Name", "Score", "program_id", "UniquenessScore"], inplace=True)
     return out_df
@@ -814,11 +936,52 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         help="Comma-separated list of program IDs to include (e.g. '1,2,3')",
     )
+    # Cell-type summary generation args
+    p_all.add_argument(
+        "--celltype-enrichment",
+        help="Path to raw cell-type enrichment CSV (generates summary automatically)",
+    )
+    p_all.add_argument(
+        "--celltype-summary-out",
+        help="Output path for cell-type summary CSV (default: auto-generated)",
+    )
 
     def run_all(args: argparse.Namespace) -> int:
         rc = cmd_extract(args)
         if rc != 0:
             return rc
+        
+        # Generate cell-type summary if enrichment file is provided
+        if getattr(args, 'celltype_enrichment', None):
+            celltype_path = Path(args.celltype_enrichment)
+            if not celltype_path.exists():
+                logger.error(f"Cell-type enrichment file not found: {celltype_path}")
+                return 2
+            
+            # Determine output path
+            if getattr(args, 'celltype_summary_out', None):
+                summary_out = Path(args.celltype_summary_out)
+            else:
+                # Default: place next to enrichment file or in output dir
+                if getattr(args, 'out_csv_full', None):
+                    summary_out = Path(args.out_csv_full).parent / "celltype_summary.csv"
+                else:
+                    summary_out = celltype_path.parent / "program_celltype_annotations_summary_generated.csv"
+            
+            # Parse topics
+            topics = parse_topics(args.topics)
+            
+            try:
+                n_programs = generate_celltype_summary(
+                    enrichment_file=celltype_path,
+                    output_file=summary_out,
+                    topics=topics,
+                )
+                logger.info(f"Generated cell-type summary for {n_programs} programs")
+            except Exception as e:
+                logger.error(f"Failed to generate cell-type summary: {e}")
+                return 2
+        
         enrich_args = argparse.Namespace(
             genes_json=args.json_out,
             species=args.species,

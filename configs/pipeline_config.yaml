@@ -19,8 +19,9 @@ input:
   # Gene loading matrix with columns: Name, Score, RowID (or program_id)
   gene_loading: input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv
   
-  # Cell-type annotations summary CSV
-  celltype_annotations: input/celltype/program_celltype_annotations_summary.csv
+  # Raw cell-type enrichment CSV (summary auto-generated in step 1)
+  # Required columns: cell_type, program, log2_fc_in_vs_out, fdr
+  celltype_enrichment: input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv
   
   # SCEPTRE regulator results (Perturb-seq analysis)
   regulator_file: input/regulators/sceptre_discovery_analysis_results.csv
