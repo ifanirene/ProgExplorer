@@ -65,7 +65,8 @@ class NcbiClient:
         for attempt in range(retries):
             try:
                 time.sleep(self.sleep_time)
-                resp = self.session.get(url, params=params, timeout=30)
+                # Increased timeout to 120s for complex gene queries
+                resp = self.session.get(url, params=params, timeout=120)
                 if resp.status_code == 200:
                     return resp
                 elif resp.status_code == 429:

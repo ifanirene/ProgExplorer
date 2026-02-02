@@ -202,6 +202,167 @@ CELLTYPE_CATEGORIES = [
 ]
 
 
+def extract_program_id(value: object) -> Optional[int]:
+    """Extract numeric program ID from various naming formats.
+    
+    Handles formats like:
+    - 'Program_1', 'program_1' -> 1
+    - 'Topic_1', 'topic_1' -> 1
+    - 'P1', 'p1', 'P_1', 'p_1' -> 1
+    - 'X1', 'X_1' -> 1 (regulator file format)
+    - '1', 1 -> 1
+    - 'Program1', 'Topic1' -> 1
+    
+    Args:
+        value: String or int containing program identifier
+        
+    Returns:
+        Integer program ID or None if parsing fails
+    """
+    import re
+    
+    if value is None:
+        return None
+    
+    # If already an integer, return it
+    if isinstance(value, (int, np.integer)):
+        return int(value)
+    
+    # Convert to string and strip whitespace
+    val_str = str(value).strip()
+    
+    # Try direct integer conversion first
+    try:
+        return int(val_str)
+    except (ValueError, TypeError):
+        pass
+    
+    # Try to extract digits from common patterns
+    # Patterns: Program_X, Topic_X, P_X, X_X (regulator format), program_X, topic_X, p_X
+    patterns = [
+        r'^(?:program|topic|p|x)_(\d+)$',  # program_1, topic_1, p_1, x_1
+        r'^(?:program|topic|p|x)(\d+)$',   # program1, topic1, p1, x1
+        r'^(\d+)$',                         # just the number
+    ]
+    
+    for pattern in patterns:
+        match = re.match(pattern, val_str, re.IGNORECASE)
+        if match:
+            try:
+                return int(match.group(1))
+            except (ValueError, TypeError, IndexError):
+                continue
+    
+    return None
+
+
+def validate_celltype_enrichment(df: pd.DataFrame, file_path: Path) -> bool:
+    """Validate cell-type enrichment DataFrame format and content.
+    
+    Non-fatal validation that logs warnings instead of raising errors.
+    This allows the pipeline to continue even with imperfect input data.
+    
+    Args:
+        df: DataFrame to validate
+        file_path: Path to the file (for warning messages)
+    
+    Returns:
+        True if validation passed, False if issues were found
+    """
+    warnings_list = []
+    has_critical_errors = False
+    
+    # 1. Check required columns
+    required_cols = {'cell_type', 'program', 'log2_fc_in_vs_out', 'fdr'}
+    missing = required_cols - set(df.columns)
+    if missing:
+        warnings_list.append(f"Missing required columns: {sorted(missing)}")
+        warnings_list.append(f"  Found columns: {sorted(df.columns)}")
+        warnings_list.append(f"  Required: {sorted(required_cols)}")
+        has_critical_errors = True
+    
+    # 2. Check DataFrame is not empty
+    if df.empty:
+        warnings_list.append("Cell-type enrichment file is empty")
+        has_critical_errors = True
+    
+    # If critical errors, log and return early
+    if has_critical_errors:
+        logger.warning(f"Cell-type enrichment file has critical issues: {file_path}")
+        for w in warnings_list:
+            logger.warning(f"  {w}")
+        return False
+    
+    # 3. Validate 'program' column - flexible format checking
+    df_temp = df.copy()
+    df_temp['program_id_parsed'] = df_temp['program'].apply(extract_program_id)
+    unparseable = df_temp[df_temp['program_id_parsed'].isna()]
+    if not unparseable.empty:
+        sample_invalid = unparseable['program'].head(5).tolist()
+        warnings_list.append(f"Could not parse {len(unparseable)} program identifiers: {sample_invalid}")
+        warnings_list.append(f"  Supported formats: Program_X, program_X, Topic_X, topic_X, P_X, p_X, X_X (regulator), ProgramX, TopicX, X")
+    
+    # 4. Validate 'log2_fc_in_vs_out' is numeric
+    try:
+        fc_numeric = pd.to_numeric(df['log2_fc_in_vs_out'], errors='coerce')
+        non_numeric_fc = df[fc_numeric.isna()]
+        if not non_numeric_fc.empty:
+            sample_bad = non_numeric_fc['log2_fc_in_vs_out'].head(5).tolist()
+            warnings_list.append(f"Non-numeric values in 'log2_fc_in_vs_out': {sample_bad}")
+            warnings_list.append(f"  Found {len(non_numeric_fc)} non-numeric log2FC values (will be ignored)")
+    except Exception as e:
+        warnings_list.append(f"Failed to validate 'log2_fc_in_vs_out' column: {e}")
+    
+    # 5. Validate 'fdr' is numeric and in valid range [0, 1]
+    try:
+        fdr_numeric = pd.to_numeric(df['fdr'], errors='coerce')
+        non_numeric_fdr = df[fdr_numeric.isna()]
+        if not non_numeric_fdr.empty:
+            sample_bad = non_numeric_fdr['fdr'].head(5).tolist()
+            warnings_list.append(f"Non-numeric values in 'fdr': {sample_bad}")
+            warnings_list.append(f"  Found {len(non_numeric_fdr)} non-numeric FDR values (will be ignored)")
+        
+        # Check FDR range (should be 0-1 for proper FDR values)
+        valid_fdr = fdr_numeric.dropna()
+        if len(valid_fdr) > 0:
+            out_of_range_mask = (valid_fdr < 0) | (valid_fdr > 1)
+            if out_of_range_mask.any():
+                out_of_range_vals = valid_fdr[out_of_range_mask].head(5).tolist()
+                warnings_list.append(f"FDR values out of range [0, 1]: {out_of_range_vals}")
+                warnings_list.append(f"  Found {out_of_range_mask.sum()} out-of-range FDR values")
+    except Exception as e:
+        warnings_list.append(f"Failed to validate 'fdr' column: {e}")
+    
+    # 6. Check for completely empty cell_type values
+    empty_celltypes = df[df['cell_type'].isna() | (df['cell_type'].astype(str).str.strip() == '')]
+    if not empty_celltypes.empty:
+        warnings_list.append(f"Found {len(empty_celltypes)} rows with empty 'cell_type' values (will be ignored)")
+    
+    # 7. Log summary statistics (informational)
+    n_programs = df['program'].nunique()
+    n_celltypes = df['cell_type'].nunique()
+    logger.info(f"Cell-type enrichment file summary: {file_path}")
+    logger.info(f"  Total rows: {len(df)}")
+    logger.info(f"  Unique programs: {n_programs}")
+    logger.info(f"  Unique cell types: {n_celltypes}")
+    
+    # Check for reasonable data coverage (warnings only)
+    if n_programs < 10:
+        warnings_list.append(f"Very few programs found ({n_programs}). Expected 50-100 for typical cNMF results.")
+    if n_celltypes < 3:
+        warnings_list.append(f"Very few cell types found ({n_celltypes}). Expected multiple cell types.")
+    
+    # Log all warnings
+    if warnings_list:
+        logger.warning(f"Cell-type enrichment validation found {len(warnings_list)} issue(s):")
+        for w in warnings_list:
+            logger.warning(f"  {w}")
+        return False
+    else:
+        logger.info(f"Cell-type enrichment validation passed: {file_path}")
+        return True
+
+
 def generate_celltype_summary(
     enrichment_file: Path,
     output_file: Path,
@@ -241,14 +402,30 @@ def generate_celltype_summary(
     df = pd.read_csv(enrichment_file)
     logger.info(f"Loaded cell-type enrichment: {enrichment_file} ({len(df)} rows)")
 
-    # Validate required columns
+    # Validate input (non-fatal, logs warnings)
+    validate_celltype_enrichment(df, enrichment_file)
+
+    # Validate required columns (critical check)
     required_cols = {'cell_type', 'program', 'log2_fc_in_vs_out', 'fdr'}
     missing = required_cols - set(df.columns)
     if missing:
+        logger.error(f"Enrichment file missing required columns: {missing}")
+        logger.error(f"  Found columns: {sorted(df.columns)}")
+        logger.error(f"  Cannot proceed without required columns. Please check your input file.")
         raise ValueError(f"Enrichment file missing required columns: {missing}")
 
-    # Extract program ID from "Program_X" format
-    df['program_id'] = df['program'].str.extract(r'Program_(\d+)').astype(int)
+    # Extract program ID using flexible parser (handles Program_X, program_X, Topic_X, X, etc.)
+    df['program_id'] = df['program'].apply(extract_program_id)
+    
+    # Check for programs that couldn't be parsed
+    unparsed = df[df['program_id'].isna()]
+    if not unparsed.empty:
+        logger.warning(f"Could not parse program IDs for {len(unparsed)} rows (will be excluded):")
+        logger.warning(f"  Sample values: {unparsed['program'].head(5).tolist()}")
+        df = df[df['program_id'].notna()].copy()
+    
+    # Ensure program_id is integer type
+    df['program_id'] = df['program_id'].astype(int)
 
     # Filter to requested topics if specified
     if topics:

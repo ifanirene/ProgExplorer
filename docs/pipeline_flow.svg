@@ -1,0 +1,252 @@
+<svg viewBox="0 0 1600 900" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+            <!-- Drop Shadow Filter -->
+            <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="120%">
+                <feGaussianBlur in="SourceAlpha" stdDeviation="3"></feGaussianBlur>
+                <feOffset dx="0" dy="4" result="offsetblur"></feOffset>
+                <feComponentTransfer>
+                    <feFuncA type="linear" slope="0.1"></feFuncA>
+                </feComponentTransfer>
+                <feMerge>
+                    <feMergeNode></feMergeNode>
+                    <feMergeNode in="SourceGraphic"></feMergeNode>
+                </feMerge>
+            </filter>
+            
+            <!-- Gradients -->
+            <linearGradient id="grad-gray" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#f9fafb;stop-opacity:1"></stop>
+                <stop offset="100%" style="stop-color:#f3f4f6;stop-opacity:1"></stop>
+            </linearGradient>
+
+            <linearGradient id="grad-teal" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#ccfbf1;stop-opacity:1"></stop>
+                <stop offset="100%" style="stop-color:#99f6e4;stop-opacity:1"></stop>
+            </linearGradient>
+
+            <linearGradient id="grad-coral" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#ffedd5;stop-opacity:1"></stop>
+                <stop offset="100%" style="stop-color:#fed7aa;stop-opacity:1"></stop>
+            </linearGradient>
+            
+            <linearGradient id="grad-indigo" x1="0%" y1="0%" x2="0%" y2="100%">
+                <stop offset="0%" style="stop-color:#e0e7ff;stop-opacity:1"></stop>
+                <stop offset="100%" style="stop-color:#c7d2fe;stop-opacity:1"></stop>
+            </linearGradient>
+            
+            <!-- Arrow Marker -->
+            <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+                <path d="M0,0 L8,3 L0,6 L1,3 Z" fill="#9ca3af"></path>
+            </marker>
+        </defs>
+
+        <!-- ================= ZONE 1: DATA SOURCES (Left) ================= -->
+        <!-- Zone Background -->
+        <rect x="40" y="40" width="320" height="820" rx="16" fill="#f9fafb" stroke="#e5e7eb" stroke-width="2"></rect>
+        <text x="200" y="80" text-anchor="middle" font-weight="800" font-size="14" fill="#9ca3af" letter-spacing="1px">INPUT DATA SOURCES</text>
+
+        <!-- Card 1 -->
+        <g transform="translate(70, 110)" filter="url(#card-shadow)">
+            <rect width="260" height="90" rx="12" fill="white" stroke="#e5e7eb" stroke-width="1"></rect>
+            <rect x="0" y="0" width="8" height="90" rx="4" fill="#6b7280"></rect> <!-- Accent Bar -->
+            <text x="30" y="35" font-weight="700" font-size="15" fill="#1f2937">Gene Loading</text>
+            <text x="30" y="65" font-size="13" fill="#6b7280">(300 genes/prog)</text>
+        </g>
+
+        <!-- Card 2 -->
+        <g transform="translate(70, 240)" filter="url(#card-shadow)">
+            <rect width="260" height="90" rx="12" fill="white" stroke="#e5e7eb" stroke-width="1"></rect>
+            <rect x="0" y="0" width="8" height="90" rx="4" fill="#6b7280"></rect>
+            <text x="30" y="35" font-weight="700" font-size="15" fill="#1f2937">STRING Enrichment</text>
+            <text x="30" y="65" font-size="13" fill="#6b7280">(KEGG/GO)</text>
+        </g>
+
+        <!-- Card 3 -->
+        <g transform="translate(70, 370)" filter="url(#card-shadow)">
+            <rect width="260" height="90" rx="12" fill="white" stroke="#e5e7eb" stroke-width="1"></rect>
+            <rect x="0" y="0" width="8" height="90" rx="4" fill="#6b7280"></rect>
+            <text x="30" y="35" font-weight="700" font-size="15" fill="#1f2937">SCEPTRE Results</text>
+            <text x="30" y="65" font-size="13" fill="#6b7280">(Perturb-seq)</text>
+        </g>
+
+        <!-- Card 4 -->
+        <g transform="translate(70, 500)" filter="url(#card-shadow)">
+            <rect width="260" height="90" rx="12" fill="white" stroke="#e5e7eb" stroke-width="1"></rect>
+            <rect x="0" y="0" width="8" height="90" rx="4" fill="#6b7280"></rect>
+            <text x="30" y="35" font-weight="700" font-size="15" fill="#1f2937">Cell-type</text>
+            <text x="30" y="65" font-size="13" fill="#6b7280">Annotations</text>
+        </g>
+
+
+        <!-- ================= ZONE 2: PROCESSING (Middle Left) ================= -->
+        <!-- Zone Background -->
+        <rect x="410" y="40" width="340" height="820" rx="16" fill="#f0fdfa" stroke="#ccfbf1" stroke-width="2"></rect>
+        <text x="580" y="80" text-anchor="middle" font-weight="800" font-size="14" fill="#5eead4" letter-spacing="1px">PROCESSING &amp; RETRIEVAL</text>
+
+        <!-- Connectors In -->
+        <path d="M 330 155 L 440 155" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arrowhead)"></path>
+        <path d="M 330 285 L 440 285" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arrowhead)"></path>
+        <path d="M 330 415 L 440 415" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arrowhead)"></path>
+        <path d="M 330 545 L 440 545" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arrowhead)"></path>
+
+        <!-- Filter Card -->
+        <g transform="translate(440, 110)" filter="url(#card-shadow)">
+            <rect width="280" height="150" rx="12" fill="white" stroke="#2dd4bf" stroke-width="2"></rect>
+            <path d="M 0 12 Q 0 0 12 0 L 268 0 Q 280 0 280 12 L 280 30 L 0 30 Z" fill="#2dd4bf"></path>
+            <text x="140" y="22" text-anchor="middle" font-weight="700" font-size="13" fill="white" letter-spacing="1px">FILTERING</text>
+            
+            <circle cx="30" cy="60" r="4" fill="#2dd4bf"></circle>
+            <text x="45" y="65" font-size="13" fill="#374151" font-weight="bold">Top 20 loading</text>
+            
+            <circle cx="30" cy="90" r="4" fill="#2dd4bf"></circle>
+            <text x="45" y="95" font-size="13" fill="#374151" font-weight="bold">Top 10 unique</text>
+            
+            <circle cx="30" cy="120" r="4" fill="#2dd4bf"></circle>
+            <text x="45" y="125" font-size="13" fill="#374151" font-weight="bold">Significant regulators</text>
+        </g>
+        
+        <!-- Arrow Down -->
+        <path d="M 580 260 L 580 310" stroke="#2dd4bf" stroke-width="2" marker-end="url(#arrowhead)"></path>
+
+        <!-- API Card -->
+        <g transform="translate(440, 310)" filter="url(#card-shadow)">
+            <rect width="280" height="160" rx="12" fill="white" stroke="#2dd4bf" stroke-width="2"></rect>
+            <path d="M 0 12 Q 0 0 12 0 L 268 0 Q 280 0 280 12 L 280 30 L 0 30 Z" fill="#2dd4bf"></path>
+            <text x="140" y="22" text-anchor="middle" font-weight="700" font-size="13" fill="white" letter-spacing="1px">ENRICHMENT API</text>
+            
+            <g transform="translate(20, 50)">
+                <rect width="240" height="40" rx="6" fill="#f0fdfa"></rect>
+                <text x="15" y="18" font-weight="700" font-size="12" fill="#0f766e">NCBI/Entrez</text>
+                <text x="15" y="32" font-size="11" fill="#0f766e">Gene summaries + Lit.</text>
+            </g>
+            
+            <g transform="translate(20, 100)">
+                <rect width="240" height="40" rx="6" fill="#f0fdfa"></rect>
+                <text x="15" y="18" font-weight="700" font-size="12" fill="#0f766e">STRING-DB API</text>
+                <text x="15" y="32" font-size="11" fill="#0f766e">Regulator → Prog. genes</text>
+            </g>
+        </g>
+
+        <!-- Arrow Down -->
+        <path d="M 580 470 L 580 540" stroke="#2dd4bf" stroke-width="2" marker-end="url(#arrowhead)"></path>
+        
+        <!-- Context Card -->
+        <g transform="translate(440, 540)" filter="url(#card-shadow)">
+            <path d="M 140 0 L 280 75 L 140 150 L 0 75 Z" fill="#2dd4bf"></path>
+            <text x="140" y="70" text-anchor="middle" font-weight="800" font-size="16" fill="white">CONTEXT</text>
+            <text x="140" y="90" text-anchor="middle" font-weight="600" font-size="14" fill="rgba(255,255,255,0.9)">ASSEMBLY</text>
+        </g>
+
+
+        <!-- ================= ZONE 3: SYNTHESIS (Middle Right) ================= -->
+        <!-- Zone Background -->
+        <rect x="790" y="40" width="340" height="820" rx="16" fill="#fff7ed" stroke="#ffedd5" stroke-width="2"></rect>
+        <text x="960" y="80" text-anchor="middle" font-weight="800" font-size="14" fill="#fb923c" letter-spacing="1px">SYNTHESIS ENGINE</text>
+
+        <!-- Connector -->
+        <path d="M 720 615 L 755 615 L 755 425 L 790 425" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arrowhead)" fill="none"></path>
+
+        <!-- Prompt Template -->
+        <g transform="translate(820, 110)" filter="url(#card-shadow)">
+            <rect width="280" height="220" rx="12" fill="white" stroke="#fb923c" stroke-width="2" stroke-dasharray="6 4"></rect>
+            <text x="140" y="30" text-anchor="middle" font-weight="700" font-size="14" fill="#c2410c">PROMPT TEMPLATE</text>
+            
+            <g transform="translate(20, 60)" font-family="monospace" font-size="11" fill="#4b5563">
+                <text x="0" y="0" fill="#ea580c" font-weight="bold">PRIMARY:</text> 
+                <text x="0" y="20">Gene lists (top loading</text>
+                <text x="0" y="40">+ unique)</text>
+                
+                <line x1="0" y1="60" x2="240" y2="60" stroke="#fed7aa"></line>
+                
+                <text x="0" y="85" fill="#ea580c" font-weight="bold">SECONDARY:</text> 
+                <text x="0" y="105">Regulators, Cell-type,</text>
+                <text x="0" y="125">Pathways, Literature</text>
+            </g>
+        </g>
+
+        <!-- Arrow Down -->
+        <path d="M 960 330 L 960 380" stroke="#fb923c" stroke-width="2" marker-end="url(#arrowhead)"></path>
+
+        <!-- LLM Box -->
+        <g transform="translate(820, 380)" filter="url(#card-shadow)">
+            <rect width="280" height="180" rx="20" fill="url(#grad-coral)" stroke="#f97316" stroke-width="0"></rect>
+            <rect x="10" y="10" width="260" height="160" rx="14" fill="white" fill-opacity="0.6"></rect>
+            
+            <text x="140" y="60" text-anchor="middle" font-weight="800" font-size="22" fill="#c2410c">Anthropic</text>
+            <text x="140" y="85" text-anchor="middle" font-weight="600" font-size="15" fill="#9a3412">Claude Sonnet 4.5</text>
+            
+            <rect x="70" y="110" width="140" height="30" rx="15" fill="#c2410c"></rect>
+            <text x="140" y="130" text-anchor="middle" font-weight="600" font-size="12" fill="white">× 100 programs</text>
+        </g>
+        
+
+        <!-- ================= ZONE 4: OUTPUT (Right) ================= -->
+        <!-- Zone Background -->
+        <rect x="1170" y="40" width="390" height="820" rx="16" fill="#eef2ff" stroke="#c7d2fe" stroke-width="2"></rect>
+        <text x="1365" y="80" text-anchor="middle" font-weight="800" font-size="14" fill="#818cf8" letter-spacing="1px">LLM OUTPUT REQUIREMENTS</text>
+
+        <!-- Connector -->
+        <path d="M 1100 470 L 1170 470" stroke="#cbd5e1" stroke-width="2" marker-end="url(#arrowhead)"></path>
+
+        <!-- Document -->
+        <g transform="translate(1215, 110)" filter="url(#card-shadow)">
+            <!-- Paper Sheet -->
+            <rect width="300" height="650" rx="2" fill="white" stroke="#e5e7eb" stroke-width="1"></rect>
+            
+            <!-- Header decoration -->
+            <rect x="0" y="0" width="300" height="6" fill="#6366f1"></rect>
+            <rect x="30" y="40" width="180" height="12" rx="6" fill="#e0e7ff"></rect>
+            <rect x="30" y="65" width="100" height="8" rx="4" fill="#f3f4f6"></rect>
+            
+            <!-- Content List -->
+            <g transform="translate(30, 95)">
+                <!-- Item 1 -->
+                <rect width="240" height="55" rx="8" fill="#f5f3ff"></rect>
+                <text x="15" y="22" font-weight="700" font-size="12" fill="#4f46e5">1. Brief Summary</text>
+                <text x="15" y="40" font-size="11" fill="#6b7280">1-2 sentences</text>
+                
+                <!-- Item 2 -->
+                <g transform="translate(0, 65)">
+                    <rect width="240" height="55" rx="8" fill="#fff" stroke="#f3f4f6"></rect>
+                    <text x="15" y="22" font-weight="700" font-size="12" fill="#1f2937">2. Program Label</text>
+                    <text x="15" y="40" font-size="11" fill="#6b7280">≤6 words, specific</text>
+                </g>
+                
+                <!-- Item 3 -->
+                <g transform="translate(0, 130)">
+                    <rect width="240" height="55" rx="8" fill="#fff" stroke="#f3f4f6"></rect>
+                    <text x="15" y="22" font-weight="700" font-size="12" fill="#1f2937">3. High-level Overview</text>
+                    <text x="15" y="40" font-size="11" fill="#6b7280">≤120 words, cite ≥2 genes</text>
+                </g>
+                
+                <!-- Item 4 -->
+                <g transform="translate(0, 195)">
+                    <rect width="240" height="55" rx="8" fill="#fff" stroke="#f3f4f6"></rect>
+                    <text x="15" y="22" font-weight="700" font-size="12" fill="#1f2937">4. Functional Modules</text>
+                    <text x="15" y="40" font-size="11" fill="#6b7280">3-5 modules + mechanisms</text>
+                </g>
+
+                <!-- Item 5 -->
+                <g transform="translate(0, 260)">
+                    <rect width="240" height="55" rx="8" fill="#fff" stroke="#f3f4f6"></rect>
+                    <text x="15" y="22" font-weight="700" font-size="12" fill="#1f2937">5. Distinctive Features</text>
+                    <text x="15" y="40" font-size="11" fill="#6b7280">What makes it unique</text>
+                </g>
+                
+                <!-- Item 6 -->
+                <g transform="translate(0, 325)">
+                    <rect width="240" height="55" rx="8" fill="#fff" stroke="#f3f4f6"></rect>
+                    <text x="15" y="22" font-weight="700" font-size="12" fill="#1f2937">6. Regulator Analysis</text>
+                    <text x="15" y="40" font-size="11" fill="#6b7280">1-3 with hypotheses</text>
+                </g>
+
+                <!-- Item 7 -->
+                <g transform="translate(0, 390)">
+                    <rect width="240" height="55" rx="8" fill="#ecfdf5" stroke="none"></rect>
+                    <text x="15" y="22" font-weight="700" font-size="12" fill="#059669">7. Program Stats</text>
+                    <text x="15" y="40" font-size="11" fill="#059669">Genes + cell-type</text>
+                </g>
+            </g>
+        </g>
+
+    </svg>

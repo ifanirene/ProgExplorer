@@ -810,7 +810,8 @@ def search_pubtator(query: str, max_results: int = 50) -> List[Dict[str, Any]]:
     params = {"text": query, "page": 1, "size": min(max_results, 100)}
     
     try:
-        resp = requests.get(url, params=params, timeout=30)
+        # Increased timeout to 120s for complex gene queries
+        resp = requests.get(url, params=params, timeout=120)
         if resp.status_code != 200:
             logger.warning(f"PubTator search failed: {resp.status_code}")
             return []
