@@ -48,11 +48,21 @@ import os
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
+from pipeline_state import (
+    STEP_NAMES,
+    PipelineState,
+    StepState,
+    compute_config_hash,
+    init_state,
+    load_state,
+    mark_step,
+    save_state,
+)
 
 # Load environment variables from .env file (supports NCBI_API_KEY, etc.)
 load_dotenv()
@@ -106,7 +116,7 @@ class PipelineConfig:
     llm_backend: str = "anthropic"  # "anthropic" (default) or "vertex"
     llm_model: str = "claude-4-sonnet-20250514"  # Anthropic model name
     llm_max_tokens: int = 8192
-    llm_wait: bool = True  # Wait for batch completion
+    llm_wait: bool = False  # Default: do not wait; resume later
     
     # Vertex AI settings (only used if llm_backend="vertex")
     vertex_bucket: str = "gs://perturbseq/batch"
@@ -333,11 +343,11 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
     return True
 
 
-def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[str]:
+def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[tuple[str, Optional[str], bool]]:
     """Step 3b: Submit batch to LLM backend.
     
-    Uses Anthropic Batch API by default, or Vertex AI if configured.
-    Returns the output path/prefix if successful, None otherwise.
+    Returns (batch_id, results_path, waiting)
+    waiting = True when submission succeeded but batch still running.
     """
     backend = config.llm_backend
     
@@ -350,20 +360,28 @@ def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[str]:
     if backend == "vertex":
         # Vertex AI submission
         cmd = [
-            sys.executable, str(script), "submit-vertex",
+            sys.executable,
+            str(script),
+            "submit-vertex",
             str(config.get_path("batch_request_json")),
-            "--model", config.llm_model.replace("-20250514", ""),  # Vertex uses short names
-            "--bucket", config.vertex_bucket,
+            "--model",
+            config.llm_model.replace("-20250514", ""),  # Vertex uses short names
+            "--bucket",
+            config.vertex_bucket,
         ]
     else:
         # Anthropic Batch API (default)
         cmd = [
-            sys.executable, str(script), "submit",
+            sys.executable,
+            str(script),
+            "submit",
             str(config.get_path("batch_request_json")),
-            "--model", config.llm_model,
-            "--max-tokens", str(config.llm_max_tokens),
+            "--model",
+            config.llm_model,
+            "--max-tokens",
+            str(config.llm_max_tokens),
         ]
-    
+
     if config.llm_wait:
         cmd.append("--wait")
     
@@ -382,6 +400,13 @@ def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[str]:
         for line in result.stdout.splitlines():
             print(line)
     
+    # Read batch ID (Anthropic writes .batch_id next to request file)
+    batch_id_file = config.get_path("batch_request_json").with_suffix(".batch_id")
+    batch_id = batch_id_file.read_text(encoding="utf-8").strip() if batch_id_file.exists() else None
+
+    results_path: Optional[str] = None
+    waiting = not config.llm_wait
+
     # Parse output to find results location
     import re
     output_path = None
@@ -435,8 +460,22 @@ def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[str]:
     logger.info("Step 3b completed successfully")
     if output_path:
         logger.info(f"Results location: {output_path}")
-    
-    return output_path
+        results_path = output_path
+
+    # If we waited and have a results file, use it
+    if config.llm_wait:
+        if output_path:
+            results_path = output_path
+        else:
+            # Fallback to conventional naming
+            candidate = config.get_path("batch_request_json").with_name(
+                config.get_path("batch_request_json").stem + "_results.jsonl"
+            )
+            if candidate.exists():
+                results_path = str(candidate)
+            waiting = False
+
+    return batch_id or "", results_path, waiting
 
 
 def run_step_4_parse_results(config: PipelineConfig, results_path: Optional[str] = None) -> bool:
@@ -526,6 +565,8 @@ def run_pipeline(
     start_from: Optional[str] = None,
     stop_after: Optional[str] = None,
     gcs_prefix: Optional[str] = None,
+    force_restart: bool = False,
+    restart_from: Optional[str] = None,
 ) -> bool:
     """Run the full pipeline or a subset of steps.
     
@@ -539,19 +580,59 @@ def run_pipeline(
         True if all requested steps completed successfully
     """
     # Validate step names
-    if start_from and start_from not in STEPS:
-        logger.error(f"Unknown step: {start_from}. Valid steps: {STEPS}")
-        return False
-    if stop_after and stop_after not in STEPS:
-        logger.error(f"Unknown step: {stop_after}. Valid steps: {STEPS}")
-        return False
+    for name in [start_from, stop_after, restart_from]:
+        if name and name not in STEPS:
+            logger.error(f"Unknown step: {name}. Valid steps: {STEPS}")
+            return False
     
-    # Determine which steps to run
+    # Create output directory
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+
+    # ------------------------------------------------------------------
+    # Load or initialize pipeline state
+    # ------------------------------------------------------------------
+    state_path = config.output_dir / "pipeline_state.json"
+    config_hash = compute_config_hash(asdict(config))
+    state = load_state(state_path)
+
+    if state:
+        if state.config_hash != config_hash and not force_restart:
+            logger.error(
+                "Config has changed since last run. Rerun with --force-restart to overwrite existing outputs."
+            )
+            return False
+        if state.config_hash != config_hash and force_restart:
+            logger.warning("Config changed; restarting pipeline and overwriting prior outputs after warning.")
+            state = init_state(config_hash, config.topics)
+            save_state(state_path, state)
+    else:
+        state = init_state(config_hash, config.topics)
+        save_state(state_path, state)
+
+    # If restart_from provided, reset steps from that step onward to pending
+    if restart_from:
+        logger.warning(
+            "--restart-from supplied; steps from %s onward will be re-run and may overwrite previous outputs.",
+            restart_from,
+        )
+        restart_idx = STEPS.index(restart_from)
+        for step in STEPS[restart_idx:]:
+            mark_step(state, step, "pending")
+        save_state(state_path, state)
+
+    # Determine which steps to run based on completed status and start/stop
     start_idx = STEPS.index(start_from) if start_from else 0
     stop_idx = STEPS.index(stop_after) if stop_after else len(STEPS) - 1
-    
-    steps_to_run = STEPS[start_idx:stop_idx + 1]
-    
+    requested_steps = STEPS[start_idx : stop_idx + 1]
+
+    # Skip completed steps unless restart_from explicitly reset them
+    steps_to_run: List[str] = []
+    for step in requested_steps:
+        step_state = state.steps.get(step)
+        if step_state and step_state.status == "completed":
+            continue
+        steps_to_run.append(step)
+
     logger.info("=" * 60)
     logger.info("PIPELINE ORCHESTRATOR")
     logger.info("=" * 60)
@@ -560,54 +641,208 @@ def run_pipeline(
     if config.topics:
         logger.info(f"Topics: {config.topics}")
     logger.info("=" * 60)
-    
-    # Create output directory
-    config.output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Track GCS prefix for step 4
-    batch_gcs_prefix = gcs_prefix
-    
-    # Run each step
+
+    batch_results_path: Optional[str] = None
+
+    # If batch already submitted in previous run, try to resume
+    batch_info = state.batch or {}
+    if batch_info.get("results_path"):
+        batch_results_path = batch_info.get("results_path")
+
+    # ------------------------------------------------------------------
+    # Execute steps
+    # ------------------------------------------------------------------
     for step in steps_to_run:
+        mark_step(state, step, "in_progress")
+        save_state(state_path, state)
+
         if step == "string_enrichment":
             if not run_step_1_string_enrichment(config):
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
                 return False
-        
-        elif step == "literature_fetch":
+            mark_step(state, step, "completed")
+            save_state(state_path, state)
+            continue
+
+        if step == "literature_fetch":
             if not run_step_2_literature_fetch(config):
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
                 return False
-        
-        elif step == "batch_prepare":
+            mark_step(state, step, "completed")
+            save_state(state_path, state)
+            continue
+
+        if step == "batch_prepare":
             if not run_step_3a_batch_prepare(config):
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
                 return False
-        
-        elif step == "batch_submit":
-            result = run_step_3b_batch_submit(config)
-            if result is None and not batch_gcs_prefix:
-                logger.warning("Batch submission did not return GCS prefix")
-                # Continue anyway - user may provide it manually
-            else:
-                batch_gcs_prefix = result or batch_gcs_prefix
-        
-        elif step == "parse_results":
-            if not run_step_4_parse_results(config, batch_gcs_prefix):
+            mark_step(state, step, "completed")
+            save_state(state_path, state)
+            continue
+
+        if step == "batch_submit":
+            # If batch already submitted, check status first
+            existing_batch_id = state.batch.get("batch_id") if state.batch else None
+            if existing_batch_id and state.steps.get(step, StepState()).status == "submitted":
+                status, results_path = check_or_wait_for_batch(
+                    batch_id=existing_batch_id,
+                    batch_file=config.get_path("batch_request_json"),
+                    results_dest=config.get_path("batch_request_json").with_name(
+                        config.get_path("batch_request_json").stem + "_results.jsonl"
+                    ),
+                    wait=config.llm_wait,
+                )
+                if status == "waiting":
+                    logger.info("Batch still in progress; rerun later to continue.")
+                    mark_step(state, step, "submitted", {"batch_id": existing_batch_id})
+                    state.batch["batch_id"] = existing_batch_id
+                    save_state(state_path, state)
+                    return True
+                if status == "failed":
+                    mark_step(state, step, "failed")
+                    save_state(state_path, state)
+                    return False
+                batch_results_path = results_path
+                state.batch["results_path"] = results_path
+                mark_step(state, step, "completed", {"batch_id": existing_batch_id})
+                save_state(state_path, state)
+                continue
+
+            # Fresh submission
+            submission = run_step_3b_batch_submit(config)
+            if submission is None:
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
                 return False
-        
-        elif step == "html_report":
+
+            batch_id, results_path, waiting = submission
+            if not batch_id:
+                logger.error("Batch submission did not return a batch ID.")
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
+                return False
+            state.batch["batch_id"] = batch_id
+            if results_path:
+                batch_results_path = results_path
+                state.batch["results_path"] = results_path
+
+            if waiting:
+                mark_step(state, step, "submitted", {"batch_id": batch_id})
+                save_state(state_path, state)
+                logger.info(
+                    "Batch submitted (%s). Rerun this command later to check status and continue.",
+                    batch_id,
+                )
+                return True
+
+            mark_step(state, step, "completed", {"batch_id": batch_id})
+            save_state(state_path, state)
+            continue
+
+        if step == "parse_results":
+            # Prefer state-stored results path if not provided
+            results_path = batch_results_path or gcs_prefix
+            if state.batch.get("results_path"):
+                results_path = state.batch.get("results_path")
+
+            if not results_path:
+                logger.error("No batch results available. Provide --gcs-prefix or ensure batch completed.")
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
+                return False
+
+            if not run_step_4_parse_results(config, results_path):
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
+                return False
+
+            mark_step(state, step, "completed")
+            save_state(state_path, state)
+            continue
+
+        if step == "html_report":
             if not run_step_5_html_report(config):
+                mark_step(state, step, "failed")
+                save_state(state_path, state)
                 return False
-    
+            mark_step(state, step, "completed")
+            save_state(state_path, state)
+            continue
+
     logger.info("=" * 60)
     logger.info("PIPELINE COMPLETED SUCCESSFULLY")
     logger.info("=" * 60)
     logger.info(f"Report: {config.get_path('report_html')}")
-    
+
     return True
 
 
 def parse_topics_arg(value: str) -> List[int]:
     """Parse comma-separated topic IDs."""
     return [int(x.strip()) for x in value.split(",") if x.strip()]
+
+
+def check_or_wait_for_batch(
+    batch_id: str,
+    batch_file: Path,
+    results_dest: Path,
+    wait: bool = False,
+) -> tuple[str, Optional[str]]:
+    """Check Anthropic batch status and optionally wait/download results.
+
+    Returns tuple(status, results_path | None)
+    status: "waiting" | "completed" | "failed"
+    """
+    try:
+        import anthropic
+    except ImportError:
+        logger.error("anthropic package not installed. Install anthropic to use batch resume.")
+        return "failed", None
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        logger.error("ANTHROPIC_API_KEY not set in environment.")
+        return "failed", None
+
+    client = anthropic.Anthropic(api_key=api_key)
+
+    def retrieve() -> Any:
+        return client.messages.batches.retrieve(batch_id)
+
+    def download_results() -> Optional[str]:
+        results_dest.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            with open(results_dest, "w", encoding="utf-8") as f:
+                for result in client.messages.batches.results(batch_id):
+                    f.write(json.dumps(result.model_dump()) + "\n")
+            return str(results_dest)
+        except Exception as exc:
+            logger.error("Failed to download batch results: %s", exc)
+            return None
+
+    batch = retrieve()
+
+    if wait:
+        logger.info("Waiting for batch %s to complete (checking every 30s)...", batch_id)
+        while batch.processing_status == "in_progress":
+            time.sleep(30)
+            batch = retrieve()
+            logger.info(
+                "Status: %s | Completed: %s", batch.processing_status, batch.request_counts
+            )
+
+    # After optional wait, check final status
+    if batch.processing_status != "ended":
+        return "waiting", None
+
+    results_path = download_results()
+    if results_path:
+        logger.info("Downloaded batch results to %s", results_path)
+        return "completed", results_path
+    return "failed", None
 
 
 def main():
@@ -710,9 +945,18 @@ Steps:
         help="Disable resume/caching (re-query all APIs)"
     )
     parser.add_argument(
-        "--no-wait",
+        "--wait",
         action="store_true",
-        help="Don't wait for batch job completion"
+        help="Wait for batch completion (default: submit and exit; resume later)")
+    parser.add_argument(
+        "--force-restart",
+        action="store_true",
+        help="Ignore existing state (warn) and restart pipeline, potentially overwriting outputs"
+    )
+    parser.add_argument(
+        "--restart-from",
+        choices=STEPS,
+        help="Re-run from the specified step (warns about overwriting downstream outputs)"
     )
     
     args = parser.parse_args()
@@ -751,8 +995,8 @@ Steps:
         config.context = args.context
     if args.no_resume:
         config.resume = False
-    if args.no_wait:
-        config.llm_wait = False
+    if args.wait:
+        config.llm_wait = True
     
     # Validate inputs exist
     if not config.gene_loading.exists():
@@ -771,6 +1015,8 @@ Steps:
         start_from=args.start_from,
         stop_after=args.stop_after,
         gcs_prefix=args.gcs_prefix,
+        force_restart=args.force_restart,
+        restart_from=args.restart_from,
     )
     
     return 0 if success else 1
