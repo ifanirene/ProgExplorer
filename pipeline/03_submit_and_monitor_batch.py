@@ -76,7 +76,7 @@ except ImportError:
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-MODEL = "claude-4-sonnet-20250514"  # Anthropic model name
+MODEL = "claude-sonnet-4-5-20250929"  # Anthropic model name
 
 """
 @description

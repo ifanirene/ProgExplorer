@@ -56,8 +56,19 @@ class PipelineState:
 
 
 def compute_config_hash(config_dict: Dict[str, Any]) -> str:
-    """Compute a stable hash of the config dict (ignores paths map)."""
-    filtered = {k: v for k, v in config_dict.items() if not k.startswith("_")}
+    """Compute a stable hash of the config dict.
+
+    Excludes keys that don't affect pipeline outputs:
+    - Keys starting with "_" (internal paths map)
+    - llm_wait: Only affects wait behavior, not results
+    - resume: Runtime flag, not a config setting
+    """
+    excluded_keys = {"llm_wait", "resume"}
+    filtered = {
+        k: v
+        for k, v in config_dict.items()
+        if not k.startswith("_") and k not in excluded_keys
+    }
     payload = json.dumps(filtered, sort_keys=True, default=str)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

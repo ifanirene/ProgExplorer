@@ -123,7 +123,7 @@ species: 10090  # 10090 = mouse, 9606 = human
 context: '(endothelial OR endothelium OR "vascular endothelial")'
 
 llm_backend: anthropic  # "anthropic" or "vertex"
-llm_model: claude-4-sonnet-20250514
+llm_model: claude-sonnet-4-5-20250929
 llm_max_tokens: 8192
 llm_wait: true  # Wait for batch to complete
 ```
@@ -175,6 +175,30 @@ python pipeline/run_pipeline.py --config configs/pipeline_config.yaml \
 ```
 
 Available step names: `string_enrichment`, `literature_fetch`, `batch_prepare`, `batch_submit`, `parse_results`, `html_report`
+
+## Automatic Resume (Batch Jobs)
+
+For asynchronous batch workflows (when `llm_wait: false`), the pipeline supports automatic resume:
+
+```bash
+# First run: submits batch and exits
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+# → Steps 1-4 complete, batch submitted
+# → "Batch submitted (msgbatch_xxx). Rerun this command later..."
+
+# Later: same command resumes automatically
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+# → Skips completed steps
+# → Checks batch status, downloads results when ready
+# → Continues with parse_results and html_report
+```
+
+The pipeline state is stored in `<output_dir>/pipeline_state.json`. On resume:
+- Completed steps are automatically skipped
+- Pending batch jobs are checked and downloaded when ready
+- If the batch is still processing, the pipeline exits cleanly (rerun later)
+
+**Note:** The config hash excludes `llm_wait` and `resume` settings, so you can change these between runs without invalidating the saved state.
 
 ## Output Structure
 

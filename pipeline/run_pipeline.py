@@ -47,7 +47,6 @@ import logging
 import os
 import subprocess
 import sys
-import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -114,7 +113,7 @@ class PipelineConfig:
     
     # LLM settings
     llm_backend: str = "anthropic"  # "anthropic" (default) or "vertex"
-    llm_model: str = "claude-4-sonnet-20250514"  # Anthropic model name
+    llm_model: str = "claude-sonnet-4-5-20250929"  # Anthropic model name
     llm_max_tokens: int = 8192
     llm_wait: bool = False  # Default: do not wait; resume later
     
@@ -357,6 +356,12 @@ def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[tuple[str, Opti
     
     script = Path(__file__).parent / "03_submit_and_monitor_batch.py"
     
+    def short_model_name(full: str) -> str:
+        parts = full.split("-")
+        if parts and parts[-1].isdigit() and len(parts[-1]) == 8:
+            return "-".join(parts[:-1])
+        return full
+
     if backend == "vertex":
         # Vertex AI submission
         cmd = [
@@ -365,7 +370,7 @@ def run_step_3b_batch_submit(config: PipelineConfig) -> Optional[tuple[str, Opti
             "submit-vertex",
             str(config.get_path("batch_request_json")),
             "--model",
-            config.llm_model.replace("-20250514", ""),  # Vertex uses short names
+            short_model_name(config.llm_model),  # Vertex uses short names
             "--bucket",
             config.vertex_bucket,
         ]
@@ -627,9 +632,11 @@ def run_pipeline(
 
     # Skip completed steps unless restart_from explicitly reset them
     steps_to_run: List[str] = []
+    skipped_steps: List[str] = []
     for step in requested_steps:
         step_state = state.steps.get(step)
         if step_state and step_state.status == "completed":
+            skipped_steps.append(step)
             continue
         steps_to_run.append(step)
 
@@ -637,9 +644,13 @@ def run_pipeline(
     logger.info("PIPELINE ORCHESTRATOR")
     logger.info("=" * 60)
     logger.info(f"Output directory: {config.output_dir}")
+    if skipped_steps:
+        logger.info(f"Skipping completed steps: {skipped_steps}")
     logger.info(f"Steps to run: {steps_to_run}")
     if config.topics:
         logger.info(f"Topics: {config.topics}")
+    if state.batch.get("batch_id"):
+        logger.info(f"Existing batch ID: {state.batch['batch_id']}")
     logger.info("=" * 60)
 
     batch_results_path: Optional[str] = None
@@ -684,34 +695,8 @@ def run_pipeline(
             continue
 
         if step == "batch_submit":
-            # If batch already submitted, check status first
-            existing_batch_id = state.batch.get("batch_id") if state.batch else None
-            if existing_batch_id and state.steps.get(step, StepState()).status == "submitted":
-                status, results_path = check_or_wait_for_batch(
-                    batch_id=existing_batch_id,
-                    batch_file=config.get_path("batch_request_json"),
-                    results_dest=config.get_path("batch_request_json").with_name(
-                        config.get_path("batch_request_json").stem + "_results.jsonl"
-                    ),
-                    wait=config.llm_wait,
-                )
-                if status == "waiting":
-                    logger.info("Batch still in progress; rerun later to continue.")
-                    mark_step(state, step, "submitted", {"batch_id": existing_batch_id})
-                    state.batch["batch_id"] = existing_batch_id
-                    save_state(state_path, state)
-                    return True
-                if status == "failed":
-                    mark_step(state, step, "failed")
-                    save_state(state_path, state)
-                    return False
-                batch_results_path = results_path
-                state.batch["results_path"] = results_path
-                mark_step(state, step, "completed", {"batch_id": existing_batch_id})
-                save_state(state_path, state)
-                continue
-
-            # Fresh submission
+            # Submit batch and exit (fire-and-forget pattern)
+            # Status checking and result download moved to parse_results step
             submission = run_step_3b_batch_submit(config)
             if submission is None:
                 mark_step(state, step, "failed")
@@ -724,13 +709,15 @@ def run_pipeline(
                 mark_step(state, step, "failed")
                 save_state(state_path, state)
                 return False
+
             state.batch["batch_id"] = batch_id
             if results_path:
                 batch_results_path = results_path
                 state.batch["results_path"] = results_path
 
             if waiting:
-                mark_step(state, step, "submitted", {"batch_id": batch_id})
+                # Batch submitted but not complete - exit cleanly
+                mark_step(state, step, "completed", {"batch_id": batch_id})
                 save_state(state_path, state)
                 logger.info(
                     "Batch submitted (%s). Rerun this command later to check status and continue.",
@@ -743,10 +730,47 @@ def run_pipeline(
             continue
 
         if step == "parse_results":
-            # Prefer state-stored results path if not provided
+            # First, try to get results path from state or args
             results_path = batch_results_path or gcs_prefix
             if state.batch.get("results_path"):
                 results_path = state.batch.get("results_path")
+
+            # If no results path but batch_id exists, check/fetch batch status
+            if not results_path and state.batch.get("batch_id"):
+                batch_id = state.batch["batch_id"]
+                logger.info("No results path found. Checking batch status for %s...", batch_id)
+
+                from batch_utils import check_anthropic_batch, check_vertex_batch
+
+                if config.llm_backend == "vertex":
+                    status, fetched_path = check_vertex_batch(
+                        batch_id,
+                        f"gs://{config.vertex_bucket}/batch_output",
+                    )
+                else:
+                    # Anthropic
+                    results_dest = config.get_path("batch_request_json").with_name(
+                        config.get_path("batch_request_json").stem + "_results.jsonl"
+                    )
+                    status, fetched_path = check_anthropic_batch(batch_id, str(results_dest))
+
+                if status == "in_progress":
+                    logger.info("Batch %s still processing. Rerun later to continue.", batch_id)
+                    save_state(state_path, state)
+                    return True  # Exit cleanly, not an error
+
+                if status == "failed":
+                    logger.error("Batch %s failed.", batch_id)
+                    mark_step(state, step, "failed")
+                    save_state(state_path, state)
+                    return False
+
+                # status == "completed"
+                if fetched_path:
+                    results_path = fetched_path
+                    state.batch["results_path"] = fetched_path
+                    save_state(state_path, state)
+                    logger.info("Batch results downloaded to: %s", fetched_path)
 
             if not results_path:
                 logger.error("No batch results available. Provide --gcs-prefix or ensure batch completed.")
@@ -783,66 +807,6 @@ def run_pipeline(
 def parse_topics_arg(value: str) -> List[int]:
     """Parse comma-separated topic IDs."""
     return [int(x.strip()) for x in value.split(",") if x.strip()]
-
-
-def check_or_wait_for_batch(
-    batch_id: str,
-    batch_file: Path,
-    results_dest: Path,
-    wait: bool = False,
-) -> tuple[str, Optional[str]]:
-    """Check Anthropic batch status and optionally wait/download results.
-
-    Returns tuple(status, results_path | None)
-    status: "waiting" | "completed" | "failed"
-    """
-    try:
-        import anthropic
-    except ImportError:
-        logger.error("anthropic package not installed. Install anthropic to use batch resume.")
-        return "failed", None
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error("ANTHROPIC_API_KEY not set in environment.")
-        return "failed", None
-
-    client = anthropic.Anthropic(api_key=api_key)
-
-    def retrieve() -> Any:
-        return client.messages.batches.retrieve(batch_id)
-
-    def download_results() -> Optional[str]:
-        results_dest.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            with open(results_dest, "w", encoding="utf-8") as f:
-                for result in client.messages.batches.results(batch_id):
-                    f.write(json.dumps(result.model_dump()) + "\n")
-            return str(results_dest)
-        except Exception as exc:
-            logger.error("Failed to download batch results: %s", exc)
-            return None
-
-    batch = retrieve()
-
-    if wait:
-        logger.info("Waiting for batch %s to complete (checking every 30s)...", batch_id)
-        while batch.processing_status == "in_progress":
-            time.sleep(30)
-            batch = retrieve()
-            logger.info(
-                "Status: %s | Completed: %s", batch.processing_status, batch.request_counts
-            )
-
-    # After optional wait, check final status
-    if batch.processing_status != "ended":
-        return "waiting", None
-
-    results_path = download_results()
-    if results_path:
-        logger.info("Downloaded batch results to %s", results_path)
-        return "completed", results_path
-    return "failed", None
 
 
 def main():
