@@ -4,230 +4,157 @@ Automated annotation of gene programs from single-cell data using LLM-based evid
 
 ## Overview
 
-### What This Pipeline Does
-
-This pipeline interprets **gene programs** (co-expressed gene modules from cNMF, NMF, or similar methods) by integrating multiple evidence types into structured biological annotations. It solves the challenge of going from raw gene lists to mechanistic understanding at scale.
+This pipeline interprets **gene programs** (co-expressed gene modules from cNMF, NMF, etc.) by integrating multiple evidence types into structured biological annotations.
 
 **Input**: Gene programs from single-cell RNA-seq analysis  
-**Output**: Structured biological annotations with functional modules, cell-type context, and regulatory mechanisms
+**Output**: Structured annotations with functional modules, cell-type context, and regulatory mechanisms
 
 ### Why LLM-Based Annotation?
 
-Gene program interpretation traditionally requires manual literature review and expert knowledge. This pipeline automates that process by:
+Gene program interpretation traditionally requires manual literature review and expert knowledge. This pipeline automates that process through:
 
-1. **Evidence-first approach**: Gathers functional enrichment, literature, cell-type enrichment, and regulator data *before* LLM analysis
-2. **Structured prompts**: Forces LLM to cite genes for every claim, preventing hallucination
+1. **Evidence-first approach**: Gathers gene summaries, pathway enrichment, literature, and regulators *before* LLM analysis
+2. **Citation-enforced prompts**: LLM must cite specific genes for every biological claim to prevent hallucination
 3. **Batch processing**: Annotates 100+ programs consistently using the same evidence framework
-4. **Multi-modal integration**: Combines pathway databases (STRING), literature (PubMed), experimental data (Perturb-seq), and cell-type markers in one analysis
 
 ### Design
 
-**Primary evidence = Gene lists**. All other data (enrichment, literature, regulators) serves as *cross-validation* only. The LLM must ground every biological claim in the actual genes provided.
+**Primary evidence = Gene lists**. All other data (enrichment, literature, regulators) serves as cross-validation. The LLM must ground every biological claim in the actual gene summaries provided.
 
-**Strict output format**. LLM responses follow a structured template with:
-- Brief summary (1-2 sentences)
-- Specific program label (≤6 words, no generic terms)
-- High-level overview (≤120 words, each claim cites ≥2 genes)
-- Functional modules (3-5 modules with mechanisms)
-- Regulator analysis (mechanistic hypotheses)
+**Structured output format**: LLM responses follow a strict template with brief summaries, specific program labels (≤6 words), functional modules, and regulator analysis.
 
-**Reproducibility**. All API calls are cached, prompts are version-controlled, and batch submissions create audit trails.
-
-## Pipeline Flow
+**Reproducibility**: All API calls are cached, prompts are version-controlled, and batch submissions create audit trails.
 
 ![Pipeline Architecture](docs/pipeline_flow.svg)
 
-The pipeline has 4 major zones:
+## Getting Started
 
-1. **Input Data Sources** (left): Gene loading, STRING enrichment, SCEPTRE results, cell-type annotations
-2. **Processing & Retrieval** (middle-left): Filter top/unique genes, fetch literature, validate regulators
-3. **Synthesis Engine** (middle-right): Assemble context into structured prompts, submit to LLM batch API
-4. **Output Requirements** (right): Parse structured annotations into markdown, CSV, and interactive HTML
-
-## Quick Start
-
-Run the full pipeline with a configuration file:
+### 1. Clone and Install
 
 ```bash
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
-```
-
-Or specify inputs directly:
-
-```bash
-python pipeline/run_pipeline.py \
-  --gene-loading input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
-  --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \
-  --regulator-file input/regulators/sceptre_discovery_analysis_results.csv \
-  --output-dir results/output/my_run
-```
-
-Test with specific topics (faster):
-
-```bash
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --topics 5,6,8,11,18
-```
-
-## Input Compatibility
-
-**The pipeline works with diverse input formats!** Column names are **case-insensitive** and support common variants:
-
-- **Gene names**: `Name`, `Gene`, `gene_name`, `GeneName`, `Symbol` → all work
-- **Scores**: `Score`, `Loading`, `Weight`, `Value` → all work  
-- **Program IDs**: `program_id`, `RowID`, `topic`, `Topic`, `component` → all work
-- **Cell types**: `cell_type`, `celltype`, `cluster`, `Cluster` → all work
-- **Log2 fold change**: `log2_fc`, `log2FC`, `log2_fold_change`, `lfc` → all work
-- **FDR/p-values**: `fdr`, `FDR`, `p_adj`, `padj`, `qvalue` → all work
-
-This means your cNMF output, Seurat cluster results, or other standard formats will work without modification.
-
-## Prerequisites
-
-### Environment Setup
-
-Install dependencies using conda:
-
-```bash
+git clone <repository-url>
+cd ProgExplorer
 conda env create -f configs/environment.yaml
 conda activate progexplorer
 ```
 
-Or manually install: `pandas`, `requests`, `numpy`, `markdown`, `pyyaml`, `anthropic`, `matplotlib`, `seaborn`, `tqdm`, `pillow`
+### 2. Set API Keys
 
-### API Keys
+Create a `.env` file in the project root:
 
-Set environment variables in `.env`:
-
-- `ANTHROPIC_API_KEY` (required for LLM annotations)
-- `NCBI_API_KEY` (optional, increases PubMed rate limits)
-
-### Optional: Vertex AI
-
-For Vertex AI backend instead of Anthropic:
-- Install Google Cloud SDK
-- Configure appropriate GCP permissions
-
-## Required Inputs
-
-The pipeline needs 3 input files. **Column names are flexible and case-insensitive** for maximum compatibility with different analysis pipelines.
-
-| File | Description | Supported Column Names |
-|------|-------------|------------------------|
-| **Gene loading** | Gene loading matrix from cNMF or similar | **Gene**: Name, Gene, gene_name, GeneName, gene_symbol, Symbol<br>**Score**: Score, Loading, Weight, Value<br>**Program ID**: program_id, RowID, topic, Topic, component |
-| **Cell-type enrichment** | Cell-type enrichment results | **Cell type**: cell_type, celltype, cluster, Cluster, annotation<br>**Program**: program, program_id, topic, Topic, RowID<br>**Log2 FC**: log2_fc, log2FC, log2_fold_change, lfc, fold_change<br>**FDR**: fdr, FDR, p_adj, padj, p_value, qvalue |
-| **Regulator file** | SCEPTRE or Perturb-seq regulator results | Standard SCEPTRE output format |
-
-**Example formats that work:**
-
-```python
-# Gene loading - All these work:
-Name, Score, program_id      # Standard
-Gene, Loading, RowID         # Alternative 1
-gene_name, score, Topic      # Alternative 2
-GENE, SCORE, topic_id        # Case-insensitive
-
-# Cell-type enrichment - All these work:
-cell_type, program, log2_fc_in_vs_out, fdr    # Standard
-cluster, topic, log2FC, p_adj                  # Alternative 1
-CellType, Program, Log2FoldChange, FDR         # Alternative 2
-Cluster, RowID, lfc, qvalue                    # Alternative 3
+```bash
+ANTHROPIC_API_KEY=sk-ant-...your-key-here
+NCBI_API_KEY=your-ncbi-key  # Optional, for higher PubMed rate limits
 ```
 
-**Note**: Program identifiers support flexible formats: `Program_<id>`, `program_<id>`, `Topic_<id>`, `topic_<id>`, `P_<id>`, `p_<id>`, or plain integers.
+Get your Anthropic API key from https://console.anthropic.com/ or request a lab AI API Gateway through your institution (recommended for labs, see https://uit.stanford.edu/service/ai-api-gateway).
 
-## Configuration
+### 3. Prepare Your Data
 
-Edit `configs/pipeline_config.yaml` to set inputs and parameters:
+You need **3 input files** (see `input/` directory for examples):
+1. **Gene loading matrix** - Required
+2. **Cell-type enrichment** - Required  
+3. **Regulator/Perturb-seq results** - Required (if unavailable, use a placeholder or modify the pipeline)
+
+**Check your data format**: The pipeline accepts case-insensitive column names (e.g., `Name`/`Gene`, `Score`/`Loading`, `program_id`/`topic`). Most cNMF and Seurat outputs work without modification.
+
+### 4. Configure
+
+Edit `configs/pipeline_config.yaml` to point to YOUR data:
 
 ```yaml
 input:
-  gene_loading: input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv
-  celltype_enrichment: input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv
-  regulator_file: input/regulators/sceptre_discovery_analysis_results.csv
+  gene_loading: path/to/your/gene_loading.csv           # YOUR file here
+  celltype_enrichment: path/to/your/celltype_enrich.csv # YOUR file here
+  regulator_file: path/to/your/regulators.csv           # YOUR file here
 
-output_dir: results/output/pipeline_run
-
-topics: null  # null = all topics, or list specific: [5, 6, 8, 11, 18]
-species: 10090  # 10090 = mouse, 9606 = human
-context: '(endothelial OR endothelium OR "vascular endothelial")'
-
-llm_backend: anthropic  # "anthropic" or "vertex"
-llm_model: claude-sonnet-4-5-20250929
-llm_max_tokens: 8192
-llm_wait: true  # Wait for batch to complete
+output_dir: results/output/my_analysis  # Where results will be saved
 ```
+
+### 5. Run
+
+```bash
+# Full pipeline
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
+
+# Test with specific topics first (recommended)
+python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --topics 5,6,8
+```
+
+The pipeline takes ~5-30 minutes depending on the number of programs and whether you're waiting for LLM batch completion (`llm_wait: true`).
+
+## Input Files
+
+The pipeline requires 3 input files. **Column names are case-insensitive** and support common variants.
+
+| File | Required Columns | Notes |
+|------|------------------|-------|
+| **Gene loading** | `Name` (gene symbol), `Score` (loading/weight), `program_id` (topic ID) | Your cNMF/NMF output. Column names flexible: `Gene`/`gene_name`, `Loading`/`Weight`, `RowID`/`topic` all work |
+| **Cell-type enrichment** | `cell_type`, `program`, `log2_fc`, `fdr` | From scanpy, Seurat, or similar. Alternatives: `cluster`, `topic`, `lfc`, `p_adj` |
+| **Regulator file** | `grna_target`, `log_2_fold_change`, `p_value`, `significant` | SCEPTRE or Perturb-seq results. Used for volcano plots and mechanistic analysis |
+
+**Validation**: Check example files in `input/` directory match your format. Test with `--topics 5,6,8` first to catch format issues quickly.
+
+**Automatically fetched** (no input needed): Gene summaries (Harmonizome/NCBI) and PubMed literature are retrieved in Step 2.
+
+## Configuration
+
+Key settings in `configs/pipeline_config.yaml`:
+
+```yaml
+input:
+  gene_loading: path/to/your/gene_loading.csv          # CHANGE THIS
+  celltype_enrichment: path/to/your/enrichment.csv     # CHANGE THIS
+  regulator_file: path/to/your/regulators.csv          # CHANGE THIS
+
+output_dir: results/output/my_run  # Output location
+
+topics: null        # null = all programs, or [5, 6, 8] for specific ones
+species: 10090      # 10090 = mouse, 9606 = human
+context: '(endothelial OR endothelium)'  # PubMed search context for your tissue/cell type
+
+llm_backend: anthropic  # "anthropic" (default) or "vertex"
+llm_wait: true          # true = wait for completion, false = async (resume later)
+```
+
+**Optional**: Use `full_summaries: true` for longer gene descriptions with PMID references (~2000 chars vs ~400 chars default).
+
+**Vertex AI setup**: If using `llm_backend: vertex`, install Google Cloud SDK and set `vertex_bucket: gs://your-bucket/path`.
 
 ## Pipeline Steps
 
-The pipeline runs 6 steps automatically:
-
-1. **String enrichment** - Extract top genes, compute UniquenessScore, run STRING enrichment, generate cell-type summary
-2. **Literature fetch** - Fetch Harmonizome gene summaries and PubMed literature (25 papers/program)
-3. **Batch prepare** - Generate LLM prompts with all evidence
+1. **String enrichment** - Extract top genes, compute UniquenessScore, run STRING pathway enrichment
+2. **Literature fetch** - Fetch gene summaries (Harmonizome/NCBI) and PubMed literature (25 papers/program)
+3. **Batch prepare** - Generate structured LLM prompts with all evidence and citation requirements
 4. **Batch submit** - Submit to Anthropic or Vertex AI batch API
-5. **Parse results** - Extract LLM annotations and generate summary
-6. **HTML report** - Create interactive HTML report with figures
+5. **Parse results** - Extract annotations into markdown and CSV
+6. **HTML report** - Generate interactive report with search and visualizations
 
 ### Why These Steps?
 
-**Step 1** creates the primary evidence (gene lists) and computes UniquenessScore to identify genes that distinguish one program from others. STRING enrichment provides pathway context as a cross-check.
+**Step 1** creates primary evidence (gene lists) and computes UniquenessScore to identify genes distinguishing each program. STRING enrichment provides pathway context as cross-validation.
 
-**Step 2** fetches literature to support or challenge pathway predictions. The "Search Narrow, Verify Broad" strategy finds papers mentioning driver genes (top 20), then scores them by coverage of all program genes (top 300).
+**Step 2** implements "Search Narrow, Verify Broad": finds papers mentioning driver genes (top 20), then scores them by coverage of all program genes (top 300). Gene summaries provide foundational biological context.
 
-**Step 3** assembles evidence into structured prompts. The prompt template enforces citation rules: every biological claim must cite specific genes from the provided lists.
+**Step 3** assembles evidence into structured prompts with strict citation rules: every biological claim must cite specific genes from the provided lists.
 
-**Step 4** uses batch APIs for cost-efficiency and consistent processing. Anthropic Batch API is default (faster, simpler). Vertex AI option available for GCP users.
+**Steps 4-6** use batch APIs for cost-efficiency, parse structured responses, and generate interactive reports for human review.
 
-**Step 5** parses LLM responses into structured markdown and extracts program labels/summaries into CSV for downstream analysis.
+## Partial & Resume Runs
 
-**Step 6** generates an interactive HTML report with search, volcano plots, and enrichment figures for human review.
+**Stop early**: Use `--stop-after batch_prepare` to prepare prompts without submitting to LLM (useful for reviewing prompts first).
 
-## Partial Pipeline Runs
+**Resume from checkpoint**: Use `--start-from parse_results` to skip to a specific step (e.g., if batch completed externally).
 
-Stop at a specific step:
+**Available steps**: `string_enrichment`, `literature_fetch`, `batch_prepare`, `batch_submit`, `parse_results`, `html_report`
 
-```bash
-# Prepare batch without submitting
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --stop-after batch_prepare
-```
+**Async workflow** (recommended for large datasets):
+1. Set `llm_wait: false` in config
+2. Run pipeline → exits after batch submission
+3. Wait for email notification or check status manually
+4. Rerun same command → automatically resumes from where it left off
 
-Resume from a specific step:
-
-```bash
-# Resume from parsing (Anthropic)
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --start-from parse_results
-
-# Resume from parsing (Vertex AI - requires GCS prefix)
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml \
-  --start-from parse_results \
-  --gcs-prefix gs://bucket/batch/prediction-model-<timestamp>/
-```
-
-Available step names: `string_enrichment`, `literature_fetch`, `batch_prepare`, `batch_submit`, `parse_results`, `html_report`
-
-## Automatic Resume (Batch Jobs)
-
-For asynchronous batch workflows (when `llm_wait: false`), the pipeline supports automatic resume:
-
-```bash
-# First run: submits batch and exits
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
-# → Steps 1-4 complete, batch submitted
-# → "Batch submitted (msgbatch_xxx). Rerun this command later..."
-
-# Later: same command resumes automatically
-python pipeline/run_pipeline.py --config configs/pipeline_config.yaml
-# → Skips completed steps
-# → Checks batch status, downloads results when ready
-# → Continues with parse_results and html_report
-```
-
-The pipeline state is stored in `<output_dir>/pipeline_state.json`. On resume:
-- Completed steps are automatically skipped
-- Pending batch jobs are checked and downloaded when ready
-- If the batch is still processing, the pipeline exits cleanly (rerun later)
-
-**Note:** The config hash excludes `llm_wait` and `resume` settings, so you can change these between runs without invalidating the saved state.
+Pipeline state is saved in `<output_dir>/pipeline_state.json`. Completed steps are always skipped.
 
 ## Output Structure
 
@@ -251,121 +178,38 @@ results/output/my_run/
 
 ## Example Outputs
 
-### STRING Enrichment Figures (Step 1)
+**STRING Enrichment** (Step 1):
 
-The pipeline generates pathway and biological process enrichment visualizations for each program:
+![Biological Process Enrichment](docs/string_enrichment_example.png) ![KEGG Pathway Enrichment](docs/kegg_enrichment_example.png)
 
-**Biological Process (Gene Ontology) Enrichment:**
-
-![Biological Process Enrichment](docs/string_enrichment_example.png)
-
-**KEGG Pathway Enrichment:**
-
-![KEGG Pathway Enrichment](docs/kegg_enrichment_example.png)
-
-### Interactive HTML Report (Final Output)
-
-The final HTML report provides a searchable, navigable interface for all program annotations:
-
-**Program Overview with Key Statistics:**
+**Interactive HTML Report** (Final Output):
 
 ![HTML Report - Program Overview](docs/html_report_example.png)
-
-**Detailed Functional Modules and Mechanisms:**
-
-![HTML Report - Analysis Sections](docs/html_report_example_2.png)
-
-**Perturbation Analysis with Interactive Volcano Plot:**
-
+![HTML Report - Functional Modules](docs/html_report_example_2.png)
 ![HTML Report - Volcano Plot](docs/html_report_example_3.png)
 
-**Key Features:**
-- **Program selector**: Dropdown to quickly switch between annotated programs
-- **Full-text search**: Search across all annotations for genes, pathways, or biological terms
-- **Navigation sidebar**: Quick links to each program annotation
-- **Interactive visualizations**: Plotly-powered volcano plots showing regulator effects
-- **Enrichment integration**: Display of STRING enrichment results alongside annotations
-- **Dark/light theme**: Toggle for comfortable viewing
+Features: Program selector, full-text search, interactive volcano plots, enrichment figures, dark/light theme.
 
 ## Advanced Options
 
-### Use Full Gene Summaries
+**Gene summaries**: Default uses short Harmonizome API summaries (~400 chars). Set `full_summaries: true` for longer summaries with PMIDs (~2000 chars), or use `gene_summary_source: ncbi` for NCBI Entrez descriptions.
 
-By default, short Harmonizome descriptions are used. For longer summaries with PMID references:
+**LLM backend**: Default is Anthropic. Set `llm_backend: vertex` for Vertex AI (requires GCS bucket).
 
-```yaml
-full_summaries: true  # In config
-```
-
-Or:
-
-```bash
-python pipeline/02_fetch_ncbi_data.py ... --full-summaries
-```
-
-### Switch LLM Backend
-
-**Anthropic (default):**
-
-```yaml
-llm_backend: anthropic
-```
-
-```bash
-# Manual batch operations
-python pipeline/03_submit_and_monitor_batch.py submit batch_request.json --wait
-python pipeline/03_submit_and_monitor_batch.py check --batch-id <BATCH_ID>
-python pipeline/03_submit_and_monitor_batch.py results --batch-id <BATCH_ID>
-```
-
-**Vertex AI:**
-
-```yaml
-llm_backend: vertex
-```
-
-```bash
-python pipeline/03_submit_and_monitor_batch.py submit-vertex batch_request.json --wait
-python pipeline/03_submit_and_monitor_batch.py check-vertex --job-name <JOB_NAME>
-```
-
-### Run Individual Scripts
-
-For debugging or custom workflows, run pipeline steps independently:
-
-```bash
-# Step 1: STRING enrichment + cell-type summary
-python pipeline/01_genes_to_string_enrichment.py all \
-  --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
-  --celltype-enrichment input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv \
-  --topics 5,6,8
-
-# Step 2: Literature fetch
-python pipeline/02_fetch_ncbi_data.py \
-  --input results/output/gene_loading_with_uniqueness.csv \
-  --json-out results/output/literature_context.json \
-  --topics 5,6,8
-
-# Step 3: Prepare batch
-python pipeline/03_submit_and_monitor_batch.py prepare \
-  --gene-file results/output/gene_loading_with_uniqueness.csv \
-  --celltype-file results/output/celltype_summary.csv \
-  --output-file results/output/batch_request.json
-```
-
-Use `--help` on any script for full options.
+**Individual scripts**: Run `python pipeline/0X_*.py --help` to execute steps independently for debugging.
 
 ## Troubleshooting
 
-**Column name errors**: The pipeline now supports flexible, case-insensitive column names. If you still get column errors, check that your file contains gene names, scores/loadings, and program identifiers in some form. Run `python tests/test_column_mapper.py` to see supported column name variants.
+**"File not found" errors**: Check that paths in your config are correct and files exist.
 
-**Program ID format errors**: Program identifiers support many formats: `Program_5`, `program_5`, `Topic_5`, `topic_5`, `P_5`, `p_5`, `5_5` (regulator files), `Program5`, `Topic5`, `55`, or plain `5`. The pipeline will automatically parse these.
+**Column name errors**: The pipeline auto-detects column names (case-insensitive). If you get column errors, verify your file has gene names, scores, and program IDs. Run `python tests/test_column_mapper.py` to see all supported column name variants.
 
-**API rate limits**: Set `NCBI_API_KEY` for higher PubMed throughput. Anthropic batch API has no rate limits.
+**API key errors**: 
+- Anthropic: Check `.env` file exists in project root with `ANTHROPIC_API_KEY=sk-ant-...`
+- Test with: `python -c "import os; from dotenv import load_dotenv; load_dotenv(); print(os.getenv('ANTHROPIC_API_KEY')[:20])"`
 
-**Missing dependencies**: Run `conda env create -f configs/environment.yaml` or manually install packages listed in Prerequisites.
+**Batch not completing**: If `llm_wait: true` times out, set `llm_wait: false` and rerun later to check status and download results.
 
-**Input file compatibility**: Example input files are provided in the `input/` directory:
-- `input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv` - Gene loading example
-- `input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv` - Cell-type enrichment example
-- `input/regulators/sceptre_discovery_analysis_results.csv` - SCEPTRE results example
+**Want to test format first?**: Run with `--topics 5,6,8` to process just 3 programs before running the full dataset.
+
+**Example formats**: See `input/` directory for reference file formats that match the expected structure.
