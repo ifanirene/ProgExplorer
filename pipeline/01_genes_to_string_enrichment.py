@@ -61,6 +61,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from column_mapper import ColumnMapper, standardize_gene_loading, standardize_celltype_enrichment
+
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -568,11 +570,19 @@ def ensure_parent_dir(path_str: str) -> None:
 
 
 def resolve_program_id_column(df: pd.DataFrame) -> str:
-    if "RowID" in df.columns:
-        return "RowID"
-    if "program_id" in df.columns:
-        return "program_id"
-    raise ValueError("Input is missing required column: RowID or program_id")
+    """
+    Identify the program ID column using flexible matching.
+    Supports: program_id, RowID, topic, Topic, etc. (case-insensitive)
+    """
+    mapper = ColumnMapper(df)
+    try:
+        actual_col = mapper.get_column('program_id', required=True)
+        return actual_col
+    except ValueError as e:
+        raise ValueError(
+            f"Could not find program ID column. {str(e)}\n"
+            f"Supported names: program_id, RowID, topic, Topic, etc."
+        )
 
 
 def normalize_program_id(value: object) -> object:
@@ -585,17 +595,30 @@ def normalize_program_id(value: object) -> object:
 def extract_top_genes_by_program(
     df: pd.DataFrame, n_top: int, id_col: str
 ) -> Dict[str, List[str]]:
-    required_cols = {"Name", "Score", id_col}
-    missing = required_cols.difference(df.columns)
-    if missing:
-        raise ValueError(f"Input is missing required columns: {sorted(missing)}")
+    """
+    Extract top-N genes per program using flexible column names.
+    Standardizes Gene/Name, Score/Loading columns automatically.
+    """
+    mapper = ColumnMapper(df)
+    
+    # Get standardized column names
+    try:
+        cols = mapper.get_columns(['gene', 'score'], required=True)
+        gene_col = cols['gene']
+        score_col = cols['score']
+    except ValueError as e:
+        raise ValueError(f"Missing required columns for gene extraction: {e}")
+    
+    # Verify program ID column exists
+    if id_col not in df.columns:
+        raise ValueError(f"Program ID column '{id_col}' not found in DataFrame")
 
     top_map: Dict[str, List[str]] = {}
     for program_id, sub in df.groupby(id_col, sort=True):
         program_id_norm = normalize_program_id(program_id)
         program_key = str(program_id_norm)
-        sub_sorted = sub.sort_values("Score", ascending=False).head(n_top)
-        genes = [str(g) for g in sub_sorted["Name"].dropna().tolist()]
+        sub_sorted = sub.sort_values(score_col, ascending=False).head(n_top)
+        genes = [str(g) for g in sub_sorted[gene_col].dropna().tolist()]
         seen = set()
         unique_genes: List[str] = []
         for g in genes:
@@ -634,14 +657,31 @@ def default_uniqueness_output(input_path: Path) -> Path:
 
 
 def build_uniqueness_table(df: pd.DataFrame, id_col: str) -> pd.DataFrame:
-    required_cols = {"Name", "Score", id_col}
-    missing = required_cols.difference(df.columns)
-    if missing:
-        raise ValueError(f"Input is missing required columns: {sorted(missing)}")
+    """
+    Build gene loading table with UniquenessScore using flexible column names.
+    """
+    mapper = ColumnMapper(df)
+    
+    # Get standardized column names
+    try:
+        cols = mapper.get_columns(['gene', 'score'], required=True)
+        gene_col = cols['gene']
+        score_col = cols['score']
+    except ValueError as e:
+        raise ValueError(f"Missing required columns for uniqueness computation: {e}")
+    
+    if id_col not in df.columns:
+        raise ValueError(f"Program ID column '{id_col}' not found")
 
     work = df.copy()
-    if "program_id" not in work.columns:
-        work["program_id"] = work[id_col]
+    
+    # Standardize column names to Name, Score, program_id
+    rename_map = {
+        gene_col: 'Name',
+        score_col: 'Score',
+        id_col: 'program_id'
+    }
+    work = work.rename(columns=rename_map)
 
     if "UniquenessScore" not in work.columns or work["UniquenessScore"].isna().all():
         work["Score"] = pd.to_numeric(work["Score"], errors="coerce")

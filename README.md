@@ -1,4 +1,4 @@
-# Topic Annotation Pipeline
+# Gene Program Annotation Pipeline
 
 Automated annotation of gene programs from single-cell data using LLM-based evidence synthesis.
 
@@ -20,7 +20,7 @@ Gene program interpretation traditionally requires manual literature review and 
 3. **Batch processing**: Annotates 100+ programs consistently using the same evidence framework
 4. **Multi-modal integration**: Combines pathway databases (STRING), literature (PubMed), experimental data (Perturb-seq), and cell-type markers in one analysis
 
-### Design Philosophy
+### Design
 
 **Primary evidence = Gene lists**. All other data (enrichment, literature, regulators) serves as *cross-validation* only. The LLM must ground every biological claim in the actual genes provided.
 
@@ -68,6 +68,19 @@ Test with specific topics (faster):
 python pipeline/run_pipeline.py --config configs/pipeline_config.yaml --topics 5,6,8,11,18
 ```
 
+## Input Compatibility
+
+**The pipeline works with diverse input formats!** Column names are **case-insensitive** and support common variants:
+
+- **Gene names**: `Name`, `Gene`, `gene_name`, `GeneName`, `Symbol` → all work
+- **Scores**: `Score`, `Loading`, `Weight`, `Value` → all work  
+- **Program IDs**: `program_id`, `RowID`, `topic`, `Topic`, `component` → all work
+- **Cell types**: `cell_type`, `celltype`, `cluster`, `Cluster` → all work
+- **Log2 fold change**: `log2_fc`, `log2FC`, `log2_fold_change`, `lfc` → all work
+- **FDR/p-values**: `fdr`, `FDR`, `p_adj`, `padj`, `qvalue` → all work
+
+This means your cNMF output, Seurat cluster results, or other standard formats will work without modification.
+
 ## Prerequisites
 
 ### Environment Setup
@@ -96,15 +109,31 @@ For Vertex AI backend instead of Anthropic:
 
 ## Required Inputs
 
-The pipeline needs 3 input files:
+The pipeline needs 3 input files. **Column names are flexible and case-insensitive** for maximum compatibility with different analysis pipelines.
 
-| File | Description | Required Columns |
-|------|-------------|------------------|
-| **Gene loading** | Gene loading matrix from cNMF or similar | `Name`, `Score`, `RowID` or `program_id` |
-| **Cell-type enrichment** | Raw cell-type enrichment results | `cell_type`, `program`, `log2_fc_in_vs_out`, `fdr` |
+| File | Description | Supported Column Names |
+|------|-------------|------------------------|
+| **Gene loading** | Gene loading matrix from cNMF or similar | **Gene**: Name, Gene, gene_name, GeneName, gene_symbol, Symbol<br>**Score**: Score, Loading, Weight, Value<br>**Program ID**: program_id, RowID, topic, Topic, component |
+| **Cell-type enrichment** | Cell-type enrichment results | **Cell type**: cell_type, celltype, cluster, Cluster, annotation<br>**Program**: program, program_id, topic, Topic, RowID<br>**Log2 FC**: log2_fc, log2FC, log2_fold_change, lfc, fold_change<br>**FDR**: fdr, FDR, p_adj, padj, p_value, qvalue |
 | **Regulator file** | SCEPTRE or Perturb-seq regulator results | Standard SCEPTRE output format |
 
-**Note**: `program` column must use format `Program_<id>` (e.g., `Program_5`).
+**Example formats that work:**
+
+```python
+# Gene loading - All these work:
+Name, Score, program_id      # Standard
+Gene, Loading, RowID         # Alternative 1
+gene_name, score, Topic      # Alternative 2
+GENE, SCORE, topic_id        # Case-insensitive
+
+# Cell-type enrichment - All these work:
+cell_type, program, log2_fc_in_vs_out, fdr    # Standard
+cluster, topic, log2FC, p_adj                  # Alternative 1
+CellType, Program, Log2FoldChange, FDR         # Alternative 2
+Cluster, RowID, lfc, qvalue                    # Alternative 3
+```
+
+**Note**: Program identifiers support flexible formats: `Program_<id>`, `program_<id>`, `Topic_<id>`, `topic_<id>`, `P_<id>`, `p_<id>`, or plain integers.
 
 ## Configuration
 
@@ -328,10 +357,15 @@ Use `--help` on any script for full options.
 
 ## Troubleshooting
 
-**Column name errors**: Ensure your gene loading file has `Name`, `Score`, and either `RowID` or `program_id`.
+**Column name errors**: The pipeline now supports flexible, case-insensitive column names. If you still get column errors, check that your file contains gene names, scores/loadings, and program identifiers in some form. Run `python tests/test_column_mapper.py` to see supported column name variants.
 
-**Cell-type format errors**: The `program` column must use format `Program_<id>` (e.g., `Program_5`, not just `5`).
+**Program ID format errors**: Program identifiers support many formats: `Program_5`, `program_5`, `Topic_5`, `topic_5`, `P_5`, `p_5`, `5_5` (regulator files), `Program5`, `Topic5`, `55`, or plain `5`. The pipeline will automatically parse these.
 
 **API rate limits**: Set `NCBI_API_KEY` for higher PubMed throughput. Anthropic batch API has no rate limits.
 
 **Missing dependencies**: Run `conda env create -f configs/environment.yaml` or manually install packages listed in Prerequisites.
+
+**Input file compatibility**: Example input files are provided in the `input/` directory:
+- `input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv` - Gene loading example
+- `input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv` - Cell-type enrichment example
+- `input/regulators/sceptre_discovery_analysis_results.csv` - SCEPTRE results example
