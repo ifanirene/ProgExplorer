@@ -184,9 +184,17 @@ results/output/my_run/
 
 **Interactive HTML Report** (Final Output):
 
-![HTML Report - Program Overview](docs/html_report_example.png)
-![HTML Report - Functional Modules](docs/html_report_example_2.png)
-![HTML Report - Volcano Plot](docs/html_report_example_3.png)
+![HTML Report - Program 18 Overview](docs/prog18_3_top.png)
+
+*Example: Program 18 (Hypoxic Metabolic Endothelial Response) showing overview, functional modules (glycolytic metabolism, hypoxia response), and mechanistic analysis.*
+
+![HTML Report - Functional Modules Detail](docs/program_18_full_overview.png)
+
+*Detailed view of functional modules showing cytoskeletal dynamics, transcriptional control mechanisms, and regulator analysis.*
+
+![HTML Report - Enrichment and Volcano Plot](docs/prog18_1_overview.png)
+
+*Bottom section showing KEGG/Biological Process enrichment figures (HIF-1 signaling, hypoxia response) and interactive volcano plot highlighting key regulators (Arnt, Egln2, Eng).*
 
 Features: Program selector, full-text search, interactive volcano plots, enrichment figures, dark/light theme.
 

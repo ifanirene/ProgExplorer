@@ -8,6 +8,7 @@ During you interaction with the user, if you find anything generalizable, especi
 - Document reusable project information (library versions, model names, fixes) in this file
 - Track recurrent errors and their solutions to prevent repetition
 - Token usage logs live under `results/output/logs/token_logs/` (default for `scripts/tools/token_tracker.py`). [Learning and Memory]
+- **HTML report enrichment rendering bug - SOLVED**: When serving HTML reports via HTTP server, enrichment figures show "No data" if served from `/annotations/` subdirectory. **Solution**: Serve from parent directory (e.g., `test_full_pipeline/`) NOT from `annotations/` subfolder, so relative paths like `../string_enrichment/figures/*.png` resolve correctly. Use URL like `http://localhost:PORT/annotations/report.html` instead of serving from inside annotations folder. Always verify enrichment images are actually visible in browser screenshots. [Learning and Memory]
 - `results/low_usage_program_summary.csv` flags low-usage programs via `is_low_usage`; map `response_id` like `X20` to `program_id` by extracting digits. [Learning and Memory]
 - Avoid leaving compatibility symlinks after reorganizations; use real folders only (e.g., `scripts/`, `results/`). [Learning and Memory]
 - Installed `hdbscan` (conda-forge) for UMAP clustering; downgraded `scikit-learn` to 1.7.2 to resolve `umap`/`check_array` incompatibility. [Learning and Memory]
