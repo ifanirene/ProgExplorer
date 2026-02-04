@@ -112,10 +112,21 @@ output_dir: results/output/my_run  # Output location
 topics: null        # null = all programs, or [5, 6, 8] for specific ones
 species: 10090      # 10090 = mouse, 9606 = human
 context: '(endothelial OR endothelium)'  # PubMed search context for your tissue/cell type
+# prompt_search_context: '(endothelial OR endothelium)'  # Optional prompt-only keywords (defaults to context)
+
+# LLM prompt context (shown in the prompt header)
+annotation_role: vascular biologist
+annotation_context: 'a gene program extracted from single-cell Perturb-seq of mouse brain endothelial cells (ECs)'
 
 llm_backend: anthropic  # "anthropic" (default) or "vertex"
 llm_wait: true          # true = wait for completion, false = async (resume later)
 ```
+
+**Important**: Set `context` (PubMed search query) and the prompt header fields
+(`annotation_role`, `annotation_context`). If you want different keywords shown to the LLM
+than what is used for PubMed search, set `prompt_search_context`. If you omit it, the
+prompt will use `context` by default. This separation lets you keep a broader PubMed
+query while showing a cleaner or more specific phrase to the LLM.
 
 **Optional**: Use `full_summaries: true` for longer gene descriptions with PMID references (~2000 chars vs ~400 chars default).
 
@@ -136,7 +147,10 @@ llm_wait: true          # true = wait for completion, false = async (resume late
 
 **Step 2** implements "Search Narrow, Verify Broad": finds papers mentioning driver genes (top 20), then scores them by coverage of all program genes (top 300). Gene summaries provide foundational biological context.
 
-**Step 3** assembles evidence into structured prompts with strict citation rules: every biological claim must cite specific genes from the provided lists.
+**Step 3** assembles evidence into structured prompts with strict citation rules: every biological claim must cite specific genes from the provided lists. Prompts include:
+- Top-loading genes (top 20 by default)
+- Unique genes (top 10 by default)
+- Representative overlap genes from the **top KEGG/Process enrichment terms** (default top 3 terms, `genes_per_term` genes each). These can include other high-loading genes beyond the top 20/unique list.
 
 **Steps 4-6** use batch APIs for cost-efficiency, parse structured responses, and generate interactive reports for human review.
 
