@@ -64,7 +64,7 @@ def generate_report(
     summary_csv: str,
     annotations_dir: str,
     enrichment_dir: str,
-    volcano_csv: str,
+    volcano_csv: str | None,
     gene_loading_csv: str,
     output_html: str,
 ):
@@ -72,7 +72,9 @@ def generate_report(
     
     # Load data
     summary_df = pd.read_csv(summary_csv)
-    volcano_df = pd.read_csv(volcano_csv) if os.path.exists(volcano_csv) else None
+    volcano_df = None
+    if volcano_csv and os.path.exists(volcano_csv):
+        volcano_df = pd.read_csv(volcano_csv)
     
     # Process volcano data by program
     volcano_by_program = {}
@@ -661,7 +663,6 @@ if __name__ == '__main__':
         ("summary_csv", "--summary-csv"),
         ("annotations_dir", "--annotations-dir"),
         ("enrichment_dir", "--enrichment-dir"),
-        ("volcano_csv", "--volcano-csv"),
         ("gene_loading_csv", "--gene-loading-csv"),
         ("output_html", "--output-html"),
     ]

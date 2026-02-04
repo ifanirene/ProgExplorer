@@ -42,11 +42,8 @@ topics: null
 # Species for STRING-DB (10090 = mouse, 9606 = human)
 species: 10090
 
-# Literature search context (for PubMed queries)
-context: '(endothelial OR endothelium OR "vascular endothelial")'
-
-# Prompt-only search context (optional; defaults to `context` if unset)
-# prompt_search_context: '(endothelial OR endothelium OR "vascular endothelial")'
+# Literature search keyword (for PubMed queries)
+keyword: '(endothelial OR endothelium OR "vascular endothelial")'
 
 # LLM prompt context (project-specific; shown in the prompt header)
 annotation_role: vascular biologist

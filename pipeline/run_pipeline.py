@@ -89,8 +89,8 @@ class PipelineConfig:
     
     User provides:
     - gene_loading: input gene loading CSV
-    - celltype_enrichment: raw cell-type enrichment CSV (auto-generates summary)
-    - regulator_file: SCEPTRE regulator results CSV
+    - celltype_enrichment: optional raw cell-type enrichment CSV (auto-generates summary if provided)
+    - regulator_file: optional SCEPTRE regulator results CSV
     - output_dir: base output directory
     
     All intermediate paths are auto-generated.
@@ -104,8 +104,7 @@ class PipelineConfig:
     # Optional settings with defaults
     topics: Optional[List[int]] = None  # None = all topics
     species: int = 10090  # Mouse by default
-    context: str = '(endothelial OR endothelium OR "vascular endothelial")'
-    prompt_search_context: Optional[str] = None
+    keyword: str = '(endothelial OR endothelium OR "vascular endothelial")'
     annotation_role: str = "vascular-biology specialist"
     annotation_context: str = (
         "a gene program extracted from single-cell Perturb-seq of mouse brain "
@@ -190,13 +189,15 @@ class PipelineConfig:
         # Filter to only known fields
         known_fields = {
             "gene_loading", "celltype_enrichment", "output_dir",
-            "regulator_file", "topics", "species", "context",
-            "prompt_search_context", "annotation_role", "annotation_context",
+            "regulator_file", "topics", "species", "keyword",
+            "annotation_role", "annotation_context",
             "n_top_genes", "top_loading", "top_unique",
             "top_enrichment", "genes_per_term",
             "llm_backend", "llm_model", "llm_max_tokens", "llm_wait",
             "vertex_bucket", "full_summaries", "resume"
         }
+        if "keyword" not in data and "context" in data:
+            data["keyword"] = data["context"]
         filtered = {k: v for k, v in data.items() if k in known_fields}
         return cls(**filtered)
     
@@ -275,7 +276,7 @@ def run_step_2_literature_fetch(config: PipelineConfig) -> bool:
     cmd = [
         sys.executable, str(script),
         "--input", str(gene_input),
-        "--context", config.context,
+        "--keyword", config.keyword,
         "--json-out", str(config.get_path("ncbi_json")),
         "--csv-out", str(config.get_path("ncbi_csv")),
         "--gene-summary-source", "harmonizome",
@@ -325,7 +326,7 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
     # Use the generated celltype summary (output of step 1) if it exists
     celltype_summary = config.get_path("celltype_summary")
     
-    search_context = config.prompt_search_context or config.context
+    search_keyword = config.keyword
     cmd = [
         sys.executable, str(script), "prepare",
         "--gene-file", str(gene_input),
@@ -339,7 +340,7 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
         "--genes-per-term", str(config.genes_per_term),
         "--annotation-role", str(config.annotation_role),
         "--annotation-context", str(config.annotation_context),
-        "--search-context", str(search_context),
+        "--search-keyword", str(search_keyword),
     ]
 
     if celltype_summary.exists():
@@ -919,12 +920,8 @@ Steps:
         help="NCBI taxonomy ID (default: 10090 for mouse)"
     )
     parser.add_argument(
-        "--context",
-        help="Literature search context query"
-    )
-    parser.add_argument(
-        "--prompt-search-context",
-        help="Prompt-only literature keywords/cell type (separate from --context)"
+        "--keyword",
+        help="PubMed search keyword for your tissue/cell type"
     )
     parser.add_argument(
         "--annotation-role",
@@ -989,10 +986,8 @@ Steps:
         config.topics = parse_topics_arg(args.topics)
     if args.species:
         config.species = args.species
-    if args.context:
-        config.context = args.context
-    if args.prompt_search_context:
-        config.prompt_search_context = args.prompt_search_context
+    if args.keyword:
+        config.keyword = args.keyword
     if args.annotation_role:
         config.annotation_role = args.annotation_role
     if args.annotation_context:

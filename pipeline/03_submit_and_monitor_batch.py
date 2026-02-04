@@ -82,7 +82,7 @@ DEFAULT_ANNOTATION_CONTEXT = (
     "a gene program extracted from single-cell Perturb-seq of mouse brain "
     "endothelial cells (ECs)"
 )
-DEFAULT_SEARCH_CONTEXT = '(endothelial OR endothelium OR "vascular endothelial")'
+DEFAULT_SEARCH_KEYWORD = '(endothelial OR endothelium OR "vascular endothelial")'
 
 """
 @description
@@ -745,7 +745,7 @@ def generate_prompt(
     ncbi_data: Dict[int, Dict[str, Any]],
     top_enrichment: int,
     genes_per_term: int,
-    search_context: str,
+    search_keyword: str,
     annotation_role: str,
     annotation_context: str,
     regulator_data: Optional[Dict[int, pd.DataFrame]] = None,
@@ -791,7 +791,7 @@ def generate_prompt(
 
     annotation_role = annotation_role or DEFAULT_ANNOTATION_ROLE
     annotation_context = annotation_context or DEFAULT_ANNOTATION_CONTEXT
-    search_context = search_context or DEFAULT_SEARCH_CONTEXT
+    search_keyword = search_keyword or DEFAULT_SEARCH_KEYWORD
 
     return (
         prompt_template.replace("{program_id}", str(program_id))
@@ -802,7 +802,7 @@ def generate_prompt(
         .replace("{ncbi_context}", ncbi_context)
         .replace("{annotation_role}", annotation_role)
         .replace("{annotation_context}", annotation_context)
-        .replace("{search_context}", search_context)
+        .replace("{search_keyword}", search_keyword)
     )
 
 
@@ -812,7 +812,7 @@ PROMPT_TEMPLATE = """
 You are a {annotation_role} interpreting Topic {program_id}, {annotation_context}.
 
 ### Project context
-- Literature search keywords/cell type: {search_context}
+- Literature search keyword/cell type: {search_keyword}
 
 ### Goal
 - Provide a specific, evidence-anchored interpretation of Topic {program_id}.
@@ -917,7 +917,7 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             ncbi_data=ncbi_data,
             top_enrichment=args.top_enrichment,
             genes_per_term=args.genes_per_term,
-            search_context=args.search_context,
+            search_keyword=args.search_keyword,
             annotation_role=args.annotation_role,
             annotation_context=args.annotation_context,
             regulator_data=regulator_data,
@@ -1367,9 +1367,9 @@ def build_parser() -> argparse.ArgumentParser:
             ),
         )
         p.add_argument(
-            "--search-context",
-            default=DEFAULT_SEARCH_CONTEXT,
-            help="Literature search keyword/cell-type context shown in the LLM prompt",
+            "--search-keyword",
+            default=DEFAULT_SEARCH_KEYWORD,
+            help="Literature search keyword/cell type shown in the LLM prompt",
         )
         p.add_argument(
             "--celltype-dir",

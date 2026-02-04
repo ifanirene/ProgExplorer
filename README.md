@@ -9,6 +9,9 @@ This pipeline interprets **gene programs** (co-expressed gene modules from cNMF,
 **Input**: Gene programs from single-cell RNA-seq analysis  
 **Output**: Structured annotations with functional modules, cell-type context, and regulatory mechanisms
 
+> **Quick note:** Set the tissue/cell-type keyword and prompt header in the config
+> (`keyword`, `annotation_role`, `annotation_context`). 
+
 ### Why LLM-Based Annotation?
 
 Gene program interpretation traditionally requires manual literature review and expert knowledge. This pipeline automates that process through:
@@ -114,8 +117,7 @@ output_dir: results/output/my_run  # Output location
 
 topics: null        # null = all programs, or [5, 6, 8] for specific ones
 species: 10090      # 10090 = mouse, 9606 = human
-context: '(endothelial OR endothelium)'  # PubMed search context for your tissue/cell type
-# prompt_search_context: '(endothelial OR endothelium)'  # Optional prompt-only keywords (defaults to context)
+keyword: '(endothelial OR endothelium)'  # PubMed search keyword for your tissue/cell type
 
 # LLM prompt context (shown in the prompt header)
 annotation_role: vascular biologist
@@ -125,11 +127,8 @@ llm_backend: anthropic  # "anthropic" (default) or "vertex"
 llm_wait: true          # true = wait for completion, false = async (resume later)
 ```
 
-**Important**: Set `context` (PubMed search query) and the prompt header fields
-(`annotation_role`, `annotation_context`). If you want different keywords shown to the LLM
-than what is used for PubMed search, set `prompt_search_context`. If you omit it, the
-prompt will use `context` by default. This separation lets you keep a broader PubMed
-query while showing a cleaner or more specific phrase to the LLM.
+**Important**: Set `keyword` (PubMed search keyword) and the prompt header fields
+(`annotation_role`, `annotation_context`).
 
 **Optional**: Use `full_summaries: true` for longer gene descriptions with PMID references (~2000 chars vs ~400 chars default).
 

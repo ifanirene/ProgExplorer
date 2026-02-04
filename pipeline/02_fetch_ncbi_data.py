@@ -6,7 +6,7 @@ papers connecting gene programs to specific diseases/functions.
 
 Process:
 1. INPUT: Loading Matrix (Genes/Scores per Program)
-2. SEARCH: Query Pubtator 3 with "Driver Genes" (Top 5-10) + Context.
+2. SEARCH: Query Pubtator 3 with "Driver Genes" (Top 5-10) + Keyword.
    Query = `(Driver1 OR ... OR DriverN) AND (endothelial OR ...)`
 3. FETCH: Retrieve BioC-JSON annotations for found PMIDs (with caching).
 4. VERIFY: Score papers by checking mentions of "Member Genes" (Top 50).
@@ -23,7 +23,7 @@ Process:
 @examples
 python pipeline/02_fetch_ncbi_data.py \
     --input input/genes/FB_moi15_seq2_loading_gene_k100_top300.csv \
-    --context "endothelial OR endothelium" \
+    --keyword "endothelial OR endothelium" \
     --csv-out results/output/ncbi_context.csv \
     --json-out results/output/ncbi_context.json \
     --api-key "$NCBI_API_KEY"
@@ -930,7 +930,7 @@ def fetch_bioc_relations_with_text(pmids: List[int]) -> Dict[int, Dict[str, Any]
 def validate_regulator_program(
     regulator: str,
     program_genes: List[str],
-    context: str = "endothelial OR vascular",
+    keyword: str = "endothelial OR vascular",
     max_pmids: int = 50,
     min_relation_score: float = 0.5
 ) -> Dict[str, Any]:
@@ -942,7 +942,7 @@ def validate_regulator_program(
     Args:
         regulator: Gene symbol of the regulator
         program_genes: List of program's top genes
-        context: Context terms for search
+        keyword: Keyword terms for search
         max_pmids: Number of PMIDs to fetch for relation extraction (default 50)
         min_relation_score: Minimum score for relations
     
@@ -964,10 +964,10 @@ def validate_regulator_program(
         'top_papers': [{'pmid': 123, 'title': '...'}, ...]
     }
     """
-    # Build query: regulator AND (gene1 OR gene2 OR ...) AND context
-    # Search for regulator with program genes in endothelial context
+    # Build query: regulator AND (gene1 OR gene2 OR ...) AND keyword
+    # Search for regulator with program genes in endothelial keyword
     genes_or = " OR ".join(program_genes[:10])  # Use top 10 program genes
-    query = f"({regulator}) AND ({genes_or}) AND ({context})"
+    query = f"({regulator}) AND ({genes_or}) AND ({keyword})"
     
     logger.info(f"  Validating {regulator}: {query[:80]}...")
     
@@ -1112,7 +1112,7 @@ def validate_program_regulators(
     program_id: int,
     regulator_data: Dict[int, pd.DataFrame],
     program_genes: List[str],
-    context: str = "endothelial OR vascular",
+    keyword: str = "endothelial OR vascular",
     top_n_regulators: int = 3,
     max_pmids_per_regulator: int = 50,
     use_string: bool = True,
@@ -1196,7 +1196,7 @@ def validate_program_regulators(
             validation = validate_regulator_program(
                 regulator=reg_info['gene'],
                 program_genes=program_genes,
-                context=context,
+                keyword=keyword,
                 max_pmids=max_pmids_per_regulator
             )
         validation['log2fc'] = reg_info['log2fc']
@@ -1213,7 +1213,7 @@ def validate_program_regulators(
             validation = validate_regulator_program(
                 regulator=reg_info['gene'],
                 program_genes=program_genes,
-                context=context,
+                keyword=keyword,
                 max_pmids=max_pmids_per_regulator
             )
         validation['log2fc'] = reg_info['log2fc']
@@ -1231,7 +1231,11 @@ def main():
     )
     parser.add_argument("--csv-out", help="Summary CSV output")
     parser.add_argument("--json-out", help="Full JSON context output")
-    parser.add_argument("--context", default='(endothelial OR endothelium OR "vascular endothelial")', help="Context query string")
+    parser.add_argument(
+        "--keyword",
+        default='(endothelial OR endothelium OR "vascular endothelial")',
+        help="Keyword query string for PubMed search",
+    )
     parser.add_argument("--api-key", help="NCBI API Key")
     parser.add_argument(
         "--gene-summary-source",
@@ -1302,9 +1306,9 @@ def main():
             continue
             
         # Construct Query
-        # (Gene1 OR Gene2 ...) AND Context
+        # (Gene1 OR Gene2 ...) AND Keyword
         genes_or = " OR ".join(drivers)
-        query = f"({genes_or}) AND {args.context}"
+        query = f"({genes_or}) AND {args.keyword}"
         
         logger.info(f"[Program {pid}] Searching: {query}")
         pmids = client.search_literature(query, size=25)
@@ -1472,7 +1476,7 @@ def main():
                 program_id=pid,
                 regulator_data=regulator_data,
                 program_genes=program_genes,
-                context=args.context,
+                keyword=args.keyword,
                 top_n_regulators=args.top_regulators,
                 max_pmids_per_regulator=args.regulator_pmids,
                 use_all_significant=args.all_significant,
