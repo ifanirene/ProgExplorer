@@ -5,9 +5,9 @@ Unified pipeline orchestrator for topic annotation workflow.
 Runs all 5 steps sequentially with a simplified configuration.
 
 Users only need to specify:
-- gene_loading: Path to the gene loading matrix CSV
-- celltype_enrichment: Path to raw cell-type enrichment CSV (summary auto-generated)
-- regulator_file: Path to SCEPTRE regulator results CSV
+    - gene_loading: Path to the gene loading matrix CSV
+    - celltype_enrichment: Optional raw cell-type enrichment CSV (summary auto-generated if provided)
+    - regulator_file: Optional SCEPTRE regulator results CSV
 - output_dir: Directory for all outputs (intermediates auto-managed)
 
 Key features:
@@ -97,8 +97,8 @@ class PipelineConfig:
     """
     # Required inputs (user must provide these)
     gene_loading: Path
-    celltype_enrichment: Path  # Raw enrichment file (summary auto-generated)
-    regulator_file: Path
+    celltype_enrichment: Optional[Path]  # Optional raw enrichment file (summary auto-generated)
+    regulator_file: Optional[Path]
     output_dir: Path
     
     # Optional settings with defaults
@@ -138,9 +138,10 @@ class PipelineConfig:
     def __post_init__(self):
         """Generate all intermediate paths from output_dir."""
         self.gene_loading = Path(self.gene_loading)
-        self.celltype_enrichment = Path(self.celltype_enrichment)
+        if self.celltype_enrichment is not None:
+            self.celltype_enrichment = Path(self.celltype_enrichment)
         self.output_dir = Path(self.output_dir)
-        if self.regulator_file:
+        if self.regulator_file is not None:
             self.regulator_file = Path(self.regulator_file)
         
         # Create output subdirectories
@@ -232,10 +233,15 @@ def run_step_1_string_enrichment(config: PipelineConfig) -> bool:
         "--figures-dir", str(config.get_path("enrichment_figures")),
         "--cache-dir", str(config.get_path("enrichment_cache")),
         "--gene-loading-out", str(config.get_path("gene_loading_with_uniqueness")),
-        # Cell-type enrichment -> summary generation
-        "--celltype-enrichment", str(config.celltype_enrichment),
-        "--celltype-summary-out", str(config.get_path("celltype_summary")),
     ]
+
+    if config.celltype_enrichment:
+        cmd.extend([
+            "--celltype-enrichment", str(config.celltype_enrichment),
+            "--celltype-summary-out", str(config.get_path("celltype_summary")),
+        ])
+    else:
+        logger.info("Cell-type enrichment file not provided; skipping cell-type summary generation.")
     
     if config.topics:
         cmd.extend(["--topics", ",".join(map(str, config.topics))])
@@ -282,7 +288,7 @@ def run_step_2_literature_fetch(config: PipelineConfig) -> bool:
     if config.full_summaries:
         cmd.append("--full-summaries")
     
-    if config.regulator_file:
+    if config.regulator_file and config.regulator_file.exists():
         cmd.extend(["--regulator-file", str(config.regulator_file)])
     if config.topics:
         cmd.extend(["--topics", ",".join(map(str, config.topics))])
@@ -316,14 +322,13 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
     if not gene_input.exists():
         gene_input = config.gene_loading
     
-    # Use the generated celltype summary (output of step 1)
+    # Use the generated celltype summary (output of step 1) if it exists
     celltype_summary = config.get_path("celltype_summary")
     
     search_context = config.prompt_search_context or config.context
     cmd = [
         sys.executable, str(script), "prepare",
         "--gene-file", str(gene_input),
-        "--celltype-file", str(celltype_summary),
         "--celltype-dir", str(celltype_summary.parent),  # Fallback directory
         "--enrichment-file", str(config.get_path("enrichment_filtered")),
         "--ncbi-file", str(config.get_path("ncbi_json")),
@@ -336,6 +341,9 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
         "--annotation-context", str(config.annotation_context),
         "--search-context", str(search_context),
     ]
+
+    if celltype_summary.exists():
+        cmd.extend(["--celltype-file", str(celltype_summary)])
     
     if config.regulator_file:
         cmd.extend(["--regulator-file", str(config.regulator_file)])
@@ -562,7 +570,7 @@ def run_step_5_html_report(config: PipelineConfig) -> bool:
         "--output-html", str(config.get_path("report_html")),
     ]
     
-    if config.regulator_file:
+    if config.regulator_file and config.regulator_file.exists():
         cmd.extend(["--volcano-csv", str(config.regulator_file)])
     
     logger.info(f"Running: {' '.join(cmd)}")
@@ -956,14 +964,14 @@ Steps:
         config = PipelineConfig.from_yaml(Path(args.config))
     else:
         # Require CLI arguments if no config file
-        if not args.gene_loading or not args.celltype_enrichment or not args.regulator_file or not args.output_dir:
+        if not args.gene_loading or not args.output_dir:
             parser.error(
-                "Either --config or all of (--gene-loading, --celltype-enrichment, --regulator-file, --output-dir) are required"
+                "Either --config or both --gene-loading and --output-dir are required"
             )
         config = PipelineConfig(
             gene_loading=Path(args.gene_loading),
-            celltype_enrichment=Path(args.celltype_enrichment),
-            regulator_file=Path(args.regulator_file),
+            celltype_enrichment=Path(args.celltype_enrichment) if args.celltype_enrichment else None,
+            regulator_file=Path(args.regulator_file) if args.regulator_file else None,
             output_dir=Path(args.output_dir),
         )
     
@@ -998,12 +1006,18 @@ Steps:
     if not config.gene_loading.exists():
         logger.error(f"Gene loading file not found: {config.gene_loading}")
         return 1
-    if not config.celltype_enrichment.exists():
-        logger.error(f"Cell-type enrichment file not found: {config.celltype_enrichment}")
-        return 1
-    if not config.regulator_file.exists():
-        logger.error(f"Regulator file not found: {config.regulator_file}")
-        return 1
+    if config.celltype_enrichment and not config.celltype_enrichment.exists():
+        logger.warning(
+            "Cell-type enrichment file not found: %s (continuing without cell-type context)",
+            config.celltype_enrichment,
+        )
+        config.celltype_enrichment = None
+    if config.regulator_file and not config.regulator_file.exists():
+        logger.warning(
+            "Regulator file not found: %s (continuing without regulator context/volcano plots)",
+            config.regulator_file,
+        )
+        config.regulator_file = None
     
     # Run pipeline
     success = run_pipeline(

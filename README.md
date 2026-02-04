@@ -51,10 +51,10 @@ Get your Anthropic API key from https://console.anthropic.com/ or request a lab 
 
 ### 3. Prepare Your Data
 
-You need **3 input files** (see `input/` directory for examples):
+You need **at least 1 input file** (see `input/` directory for examples):
 1. **Gene loading matrix** - Required
-2. **Cell-type enrichment** - Required  
-3. **Regulator/Perturb-seq results** - Required (if unavailable, use a placeholder or modify the pipeline)
+2. **Cell-type enrichment** - Optional (if missing, cell-type context is skipped)
+3. **Regulator/Perturb-seq results** - Optional (if missing, regulator context/volcano plots are skipped)
 
 **Check your data format**: The pipeline accepts case-insensitive column names (e.g., `Name`/`Gene`, `Score`/`Loading`, `program_id`/`topic`). Most cNMF and Seurat outputs work without modification.
 
@@ -89,13 +89,16 @@ The pipeline requires 3 input files. **Column names are case-insensitive** and s
 
 | File | Required Columns | Notes |
 |------|------------------|-------|
-| **Gene loading** | `Name` (gene symbol), `Score` (loading/weight), `program_id` (topic ID) | Your cNMF/NMF output. Column names flexible: `Gene`/`gene_name`, `Loading`/`Weight`, `RowID`/`topic` all work |
-| **Cell-type enrichment** | `cell_type`, `program`, `log2_fc`, `fdr` | From scanpy, Seurat, or similar. Alternatives: `cluster`, `topic`, `lfc`, `p_adj` |
-| **Regulator file** | `grna_target`, `log_2_fold_change`, `p_value`, `significant` | SCEPTRE or Perturb-seq results. Used for volcano plots and mechanistic analysis |
+| **Gene loading** | `Name` (gene symbol), `Score` (loading/weight), `program_id` (topic ID) | Required. Your cNMF/NMF output. Column names flexible: `Gene`/`gene_name`, `Loading`/`Weight`, `RowID`/`topic` all work |
+| **Cell-type enrichment** | `cell_type`, `program`, `log2_fc`, `fdr` | Optional. From scanpy, Seurat, or similar. Alternatives: `cluster`, `topic`, `lfc`, `p_adj` |
+| **Regulator file** | `grna_target`, `log_2_fold_change`, `p_value`, `significant` | Optional. SCEPTRE or Perturb-seq results. Used for volcano plots and mechanistic analysis |
 
 **Validation**: Check example files in `input/` directory match your format. Test with `--topics 5,6,8` first to catch format issues quickly.
 
 **Automatically fetched** (no input needed): Gene summaries (Harmonizome/NCBI) and PubMed literature are retrieved in Step 2.
+
+If `celltype_enrichment` or `regulator_file` are omitted, the pipeline still runs but
+skips cell-type and regulator context.
 
 ## Configuration
 
@@ -104,8 +107,8 @@ Key settings in `configs/pipeline_config.yaml`:
 ```yaml
 input:
   gene_loading: path/to/your/gene_loading.csv          # CHANGE THIS
-  celltype_enrichment: path/to/your/enrichment.csv     # CHANGE THIS
-  regulator_file: path/to/your/regulators.csv          # CHANGE THIS
+  celltype_enrichment: path/to/your/enrichment.csv     # Optional
+  regulator_file: path/to/your/regulators.csv          # Optional
 
 output_dir: results/output/my_run  # Output location
 
@@ -176,7 +179,7 @@ Pipeline state is saved in `<output_dir>/pipeline_state.json`. Completed steps a
 results/output/my_run/
 ├── genes_top.json                      # Program → gene list mapping
 ├── gene_loading_with_uniqueness.csv    # Gene table with UniquenessScore
-├── celltype_summary.csv                # Auto-generated cell-type summary
+├── celltype_summary.csv                # Auto-generated cell-type summary (if provided)
 ├── literature_context.json             # Gene summaries & literature
 ├── string_enrichment/
 │   ├── enrichment_filtered.csv         # Process/KEGG enrichment terms
@@ -189,6 +192,9 @@ results/output/my_run/
     ├── summary.csv                     # Topic names and summaries
     └── report.html                     # Interactive HTML report
 ```
+
+If `celltype_enrichment` is not provided, `celltype_summary.csv` will be absent and
+cell-type context is reported as unavailable in prompts and the HTML report.
 
 ## Example Outputs
 
