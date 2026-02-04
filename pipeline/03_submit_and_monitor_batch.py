@@ -77,6 +77,12 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 MODEL = "claude-sonnet-4-5-20250929"  # Anthropic model name
+DEFAULT_ANNOTATION_ROLE = "vascular-biology specialist"
+DEFAULT_ANNOTATION_CONTEXT = (
+    "a gene program extracted from single-cell Perturb-seq of mouse brain "
+    "endothelial cells (ECs)"
+)
+DEFAULT_SEARCH_CONTEXT = '(endothelial OR endothelium OR "vascular endothelial")'
 
 """
 @description
@@ -315,11 +321,22 @@ def load_celltype_annotations(
         "highly_cell_type_specific",
         "moderately_enriched",
         "weakly_enriched",
-        "significantly_lower_expression",
     }
     missing = required_cols - set(df.columns)
     if missing:
         logger.warning("Cell-type summary missing columns: %s", missing)
+        return {}
+    depleted_column = None
+    if "depleted" in df.columns:
+        depleted_column = "depleted"
+    elif "significantly_lower_expression" in df.columns:
+        depleted_column = "significantly_lower_expression"
+        logger.warning(
+            "Cell-type summary uses legacy column 'significantly_lower_expression'; "
+            "prefer 'depleted' in regenerated summaries."
+        )
+    else:
+        logger.warning("Cell-type summary missing depleted column ('depleted').")
         return {}
 
     annotation_map: Dict[int, Dict[str, List[str]]] = {}
@@ -333,9 +350,7 @@ def load_celltype_annotations(
             ),
             "moderately_enriched": _split_pipe_list(row.get("moderately_enriched")),
             "weakly_enriched": _split_pipe_list(row.get("weakly_enriched")),
-            "significantly_lower_expression": _split_pipe_list(
-                row.get("significantly_lower_expression")
-            ),
+            "depleted": _split_pipe_list(row.get(depleted_column)),
         }
     return annotation_map
 
@@ -352,7 +367,7 @@ def format_celltype_context(
         "highly_cell_type_specific": "Highly specific",
         "moderately_enriched": "Moderately enriched",
         "weakly_enriched": "Weakly enriched",
-        "significantly_lower_expression": "Lower expression",
+        "depleted": "Depleted in",
     }
     for key, label in label_map.items():
         values = program_info.get(key, [])
@@ -730,6 +745,9 @@ def generate_prompt(
     ncbi_data: Dict[int, Dict[str, Any]],
     top_enrichment: int,
     genes_per_term: int,
+    search_context: str,
+    annotation_role: str,
+    annotation_context: str,
     regulator_data: Optional[Dict[int, pd.DataFrame]] = None,
 ) -> Optional[str]:
     top_loading_genes, unique_genes = select_program_genes(
@@ -771,6 +789,10 @@ def generate_prompt(
         regulator_data or {}, ncbi_data, program_id, top_n_validated=3, top_n_listed=5
     )
 
+    annotation_role = annotation_role or DEFAULT_ANNOTATION_ROLE
+    annotation_context = annotation_context or DEFAULT_ANNOTATION_CONTEXT
+    search_context = search_context or DEFAULT_SEARCH_CONTEXT
+
     return (
         prompt_template.replace("{program_id}", str(program_id))
         .replace("{gene_context}", gene_context)
@@ -778,13 +800,19 @@ def generate_prompt(
         .replace("{celltype_context}", celltype_context)
         .replace("{enrichment_context}", enrichment_context)
         .replace("{ncbi_context}", ncbi_context)
+        .replace("{annotation_role}", annotation_role)
+        .replace("{annotation_context}", annotation_context)
+        .replace("{search_context}", search_context)
     )
 
 
 PROMPT_TEMPLATE = """
 ## Edited prompt (evidence-first, low-speculation)
 
-You are a vascular-biology specialist interpreting Topic {program_id}, a gene program extracted from single-cell Perturb-seq of mouse brain endothelial cells (ECs).
+You are a {annotation_role} interpreting Topic {program_id}, {annotation_context}.
+
+### Project context
+- Literature search keywords/cell type: {search_context}
 
 ### Goal
 - Provide a specific, evidence-anchored interpretation of Topic {program_id}.
@@ -889,6 +917,9 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             ncbi_data=ncbi_data,
             top_enrichment=args.top_enrichment,
             genes_per_term=args.genes_per_term,
+            search_context=args.search_context,
+            annotation_role=args.annotation_role,
+            annotation_context=args.annotation_context,
             regulator_data=regulator_data,
         )
         if prompt:
@@ -1321,6 +1352,24 @@ def build_parser() -> argparse.ArgumentParser:
                 "Path to gene CSV with columns: Name, Score, program_id or RowID. "
                 "UniquenessScore computed if missing."
             ),
+        )
+        p.add_argument(
+            "--annotation-role",
+            default=DEFAULT_ANNOTATION_ROLE,
+            help="Specialist role used in the LLM prompt header",
+        )
+        p.add_argument(
+            "--annotation-context",
+            default=DEFAULT_ANNOTATION_CONTEXT,
+            help=(
+                "Dataset/cell-type description inserted into the LLM prompt header "
+                "(e.g., 'a gene program extracted from single-cell RNA-seq of microglia')"
+            ),
+        )
+        p.add_argument(
+            "--search-context",
+            default=DEFAULT_SEARCH_CONTEXT,
+            help="Literature search keyword/cell-type context shown in the LLM prompt",
         )
         p.add_argument(
             "--celltype-dir",

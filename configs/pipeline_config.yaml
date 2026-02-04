@@ -45,6 +45,13 @@ species: 10090
 # Literature search context (for PubMed queries)
 context: '(endothelial OR endothelium OR "vascular endothelial")'
 
+# Prompt-only search context (optional; defaults to `context` if unset)
+# prompt_search_context: '(endothelial OR endothelium OR "vascular endothelial")'
+
+# LLM prompt context (project-specific; shown in the prompt header)
+annotation_role: vascular biologist
+annotation_context: 'a gene program extracted from single-cell Perturb-seq of mouse brain endothelial cells (ECs)'
+
 # Gene selection parameters
 n_top_genes: 300      # Top N genes per program for STRING enrichment
 top_loading: 20       # Top loading genes for LLM prompts

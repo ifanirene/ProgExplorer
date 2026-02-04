@@ -192,7 +192,7 @@ CELLTYPE_THRESHOLDS = {
     'highly_cell_type_specific': {'log2fc_min': 3.0, 'log2fc_max': None},
     'moderately_enriched': {'log2fc_min': 1.5, 'log2fc_max': 3.0},
     'weakly_enriched': {'log2fc_min': 0.5, 'log2fc_max': 1.5},
-    'significantly_lower_expression': {'log2fc_min': None, 'log2fc_max': -0.5},
+    'depleted': {'log2fc_min': None, 'log2fc_max': -0.5},
 }
 
 # Column order for cell-type summary output
@@ -200,7 +200,7 @@ CELLTYPE_CATEGORIES = [
     'highly_cell_type_specific',
     'moderately_enriched',
     'weakly_enriched',
-    'significantly_lower_expression',
+    'depleted',
 ]
 
 
@@ -390,7 +390,7 @@ def generate_celltype_summary(
         Number of programs written
 
     Output format:
-        program,highly_cell_type_specific,moderately_enriched,weakly_enriched,significantly_lower_expression
+        program,highly_cell_type_specific,moderately_enriched,weakly_enriched,depleted
         Program_1,,,,
         Program_2,Large-artery,,BBB-high capillary,
         ...

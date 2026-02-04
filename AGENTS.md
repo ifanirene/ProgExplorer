@@ -18,6 +18,7 @@ During you interaction with the user, if you find anything generalizable, especi
 - Harmonizome metadata has boilerplate (dates/resources); clean text and remove months/years before keyword clustering. [Learning and Memory]
 - When editing files, use the `apply_patch` tool directly instead of invoking it via a shell command. [Learning and Memory]
 - Some conda envs here do not include `bin/activate`; call the env's Python directly if activation script is missing. [Learning and Memory]
+- Running repo Python scripts with system Python can fail due to NumPy/libgfortran errors; use `/Volumes/IF_PHAGE/conda_envs/perturb2/bin/python` instead. [Learning and Memory]
 - Pytest may not resolve `tools.*` imports unless `scripts/` is on `sys.path`; tests can append the repo `scripts/` directory. [Learning and Memory]
 - When asked to review a repo, avoid modifying files without explicit approval; perform a read-only review first. [Learning and Memory]
 - When asked to update references, search the repo and update all occurrences before responding. [Learning and Memory]

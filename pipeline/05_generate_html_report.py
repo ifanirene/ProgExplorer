@@ -141,7 +141,7 @@ def generate_design_a_html(programs_data, num_programs, generated_on):
     
     # Build TOC
     toc_items = "\n".join([
-        f'<a href="#" onclick="selectProgram({p["id"]}); return false;" data-id="{p["id"]}" data-search="{p["name"].lower()} {p["annotation_text"][:500].lower()}">'
+        f'<a href="#" onclick="selectProgram({p["id"]}); return false;" data-id="{p["id"]}">'
         f'{p["id"]}. {p["name"]}</a>'
         for p in programs_data
     ])
@@ -424,6 +424,21 @@ def generate_design_a_html(programs_data, num_programs, generated_on):
     
     let current = null;
     const ids = Object.keys(PROGRAMS).map(Number).sort((a,b) => a-b);
+    const programSearch = {{}};
+    ids.forEach(id => {{
+        const p = PROGRAMS[id] || {{}};
+        const parts = [
+            p.name,
+            p.label,
+            p.summary,
+            p.top_loading,
+            p.unique,
+            p.celltype,
+            p.annotation_text,
+        ];
+        const combined = parts.filter(Boolean).join(' ');
+        programSearch[id] = combined.replace(/\\s+/g, ' ').toLowerCase();
+    }});
     
     function selectProgram(id) {{
         id = parseInt(id);
@@ -536,7 +551,8 @@ def generate_design_a_html(programs_data, num_programs, generated_on):
     function filterPrograms() {{
         const q = document.getElementById('search').value.toLowerCase();
         document.querySelectorAll('.toc a').forEach(a => {{
-            const searchText = a.dataset.search || '';
+            const id = a.dataset.id;
+            const searchText = programSearch[id] || '';
             a.style.display = searchText.includes(q) ? '' : 'none';
         }});
     }}

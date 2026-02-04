@@ -105,6 +105,12 @@ class PipelineConfig:
     topics: Optional[List[int]] = None  # None = all topics
     species: int = 10090  # Mouse by default
     context: str = '(endothelial OR endothelium OR "vascular endothelial")'
+    prompt_search_context: Optional[str] = None
+    annotation_role: str = "vascular-biology specialist"
+    annotation_context: str = (
+        "a gene program extracted from single-cell Perturb-seq of mouse brain "
+        "endothelial cells (ECs)"
+    )
     n_top_genes: int = 300
     top_loading: int = 20
     top_unique: int = 10
@@ -184,6 +190,7 @@ class PipelineConfig:
         known_fields = {
             "gene_loading", "celltype_enrichment", "output_dir",
             "regulator_file", "topics", "species", "context",
+            "prompt_search_context", "annotation_role", "annotation_context",
             "n_top_genes", "top_loading", "top_unique",
             "top_enrichment", "genes_per_term",
             "llm_backend", "llm_model", "llm_max_tokens", "llm_wait",
@@ -312,6 +319,7 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
     # Use the generated celltype summary (output of step 1)
     celltype_summary = config.get_path("celltype_summary")
     
+    search_context = config.prompt_search_context or config.context
     cmd = [
         sys.executable, str(script), "prepare",
         "--gene-file", str(gene_input),
@@ -324,6 +332,9 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
         "--top-unique", str(config.top_unique),
         "--top-enrichment", str(config.top_enrichment),
         "--genes-per-term", str(config.genes_per_term),
+        "--annotation-role", str(config.annotation_role),
+        "--annotation-context", str(config.annotation_context),
+        "--search-context", str(search_context),
     ]
     
     if config.regulator_file:
@@ -904,6 +915,21 @@ Steps:
         help="Literature search context query"
     )
     parser.add_argument(
+        "--prompt-search-context",
+        help="Prompt-only literature keywords/cell type (separate from --context)"
+    )
+    parser.add_argument(
+        "--annotation-role",
+        help="Specialist role used in the LLM prompt header"
+    )
+    parser.add_argument(
+        "--annotation-context",
+        help=(
+            "Dataset/cell-type description inserted into the LLM prompt header "
+            "(e.g., 'a gene program extracted from single-cell RNA-seq of microglia')"
+        ),
+    )
+    parser.add_argument(
         "--no-resume",
         action="store_true",
         help="Disable resume/caching (re-query all APIs)"
@@ -957,6 +983,12 @@ Steps:
         config.species = args.species
     if args.context:
         config.context = args.context
+    if args.prompt_search_context:
+        config.prompt_search_context = args.prompt_search_context
+    if args.annotation_role:
+        config.annotation_role = args.annotation_role
+    if args.annotation_context:
+        config.annotation_context = args.annotation_context
     if args.no_resume:
         config.resume = False
     if args.wait:
