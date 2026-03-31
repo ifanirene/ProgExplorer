@@ -53,6 +53,7 @@ from string_api import (
     get_regulator_program_interactions,
     batch_validate_regulators,
 )
+from column_mapper import standardize_regulator_results
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -675,7 +676,10 @@ PUBTATOR_API_BASE = "https://www.ncbi.nlm.nih.gov/research/pubtator3-api"
 PUBTATOR_RATE_LIMIT = 0.1  # 10 requests per second
 
 
-def load_regulator_data(csv_path: Path) -> Dict[int, pd.DataFrame]:
+def load_regulator_data(
+    csv_path: Path,
+    significance_threshold: float = 0.05,
+) -> Dict[int, pd.DataFrame]:
     """Load significant regulators from SCEPTRE results CSV.
     
     Returns dict mapping program_id -> DataFrame with columns:
@@ -686,12 +690,17 @@ def load_regulator_data(csv_path: Path) -> Dict[int, pd.DataFrame]:
         return {}
     
     df = pd.read_csv(csv_path)
+    df = standardize_regulator_results(
+        df, significance_threshold=significance_threshold
+    )
     df = df[df["significant"] == True].copy()  # type: ignore
-    df["program_id"] = df["response_id"].str.replace("X", "").astype(int)  # type: ignore
     
     result = {}
     for pid, group in df.groupby("program_id"):
-        result[int(pid)] = group[["grna_target", "log_2_fold_change", "p_value"]].copy()
+        keep_cols = ["grna_target", "log_2_fold_change", "p_value", "significant"]
+        if "adj_p_value" in group.columns:
+            keep_cols.append("adj_p_value")
+        result[int(pid)] = group[keep_cols].copy()
     
     logger.info(f"Loaded regulators for {len(result)} programs")
     return result
@@ -701,6 +710,8 @@ def get_top_regulators(
     regulator_data: Dict[int, pd.DataFrame],
     program_id: int,
     top_n: int = 3,
+    top_n_positive: Optional[int] = None,
+    top_n_negative: Optional[int] = None,
     use_all_significant: bool = False,
     max_regulators: int = 20
 ) -> Dict[str, List[Dict[str, Any]]]:
@@ -709,7 +720,9 @@ def get_top_regulators(
     Args:
         regulator_data: Dict mapping program_id to DataFrame
         program_id: Program to get regulators for
-        top_n: Number of top regulators per category (if not using all significant)
+        top_n: Backward-compatible default for both directions
+        top_n_positive: Number of positive regulators to return
+        top_n_negative: Number of negative regulators to return
         use_all_significant: If True, return all significant regulators (up to max_regulators)
         max_regulators: Maximum regulators per category when using all significant
     
@@ -722,11 +735,9 @@ def get_top_regulators(
     if reg_df is None or len(reg_df) == 0:
         return {'positive': [], 'negative': []}
     
-    # Filter to significant only if requested and column exists
-    if use_all_significant and 'significant' in reg_df.columns:
-        sig_df = reg_df[reg_df['significant'] == True].copy()
-    else:
-        sig_df = reg_df.copy()
+    top_n_positive = top_n if top_n_positive is None else top_n_positive
+    top_n_negative = top_n if top_n_negative is None else top_n_negative
+    sig_df = reg_df[reg_df['significant'] == True].copy()
     
     sorted_df = sig_df.sort_values(by="log_2_fold_change")
     
@@ -735,8 +746,8 @@ def get_top_regulators(
         positive = sorted_df[sorted_df["log_2_fold_change"] < 0].head(max_regulators)
         negative = sorted_df[sorted_df["log_2_fold_change"] > 0].tail(max_regulators).iloc[::-1]
     else:
-        positive = sorted_df[sorted_df["log_2_fold_change"] < 0].head(top_n)
-        negative = sorted_df[sorted_df["log_2_fold_change"] > 0].tail(top_n).iloc[::-1]
+        positive = sorted_df[sorted_df["log_2_fold_change"] < 0].head(top_n_positive)
+        negative = sorted_df[sorted_df["log_2_fold_change"] > 0].tail(top_n_negative).iloc[::-1]
     
     def extract_regulator(row):
         result = {
@@ -1114,6 +1125,8 @@ def validate_program_regulators(
     program_genes: List[str],
     keyword: str = "endothelial OR vascular",
     top_n_regulators: int = 3,
+    top_n_positive_regulators: Optional[int] = None,
+    top_n_negative_regulators: Optional[int] = None,
     max_pmids_per_regulator: int = 50,
     use_string: bool = True,
     use_all_significant: bool = False,
@@ -1141,6 +1154,8 @@ def validate_program_regulators(
         regulator_data, 
         program_id, 
         top_n=top_n_regulators,
+        top_n_positive=top_n_positive_regulators,
+        top_n_negative=top_n_negative_regulators,
         use_all_significant=use_all_significant,
         max_regulators=max_regulators
     )
@@ -1254,8 +1269,11 @@ def main():
     parser.add_argument("--top-loading", type=int, default=20, help="Number of top loading genes (default 20)")
     parser.add_argument("--top-unique", type=int, default=10, help="Number of top unique genes, non-overlapping with loading (default 10)")
     parser.add_argument("--top-member", type=int, default=100, help="Number of member genes for context")
-    parser.add_argument("--regulator-file", type=str, help="CSV with regulator perturbation results (grna_target, log_2_fold_change)")
-    parser.add_argument("--top-regulators", type=int, default=3, help="Number of top positive/negative regulators to validate (if not using --all-significant)")
+    parser.add_argument("--regulator-file", type=str, help="CSV with regulator perturbation results")
+    parser.add_argument("--top-regulators", type=int, default=3, help="Backward-compatible default for positive/negative regulator counts")
+    parser.add_argument("--top-positive-regulators", type=int, help="Number of top positive regulators to validate")
+    parser.add_argument("--top-negative-regulators", type=int, help="Number of top negative regulators to validate")
+    parser.add_argument("--regulator-significance-threshold", type=float, default=0.05, help="Adjusted p-value threshold used when the regulator file has no 'significant' column (default 0.05)")
     parser.add_argument("--regulator-pmids", type=int, default=50, help="Number of PMIDs to fetch per regulator (default 50)")
     parser.add_argument("--all-significant", action="store_true", help="Validate ALL significant regulators (not just top N). Fast with STRING.")
     parser.add_argument("--max-regulators", type=int, default=20, help="Maximum regulators per category when using --all-significant (default 20)")
@@ -1461,7 +1479,10 @@ def main():
         logger.info("Step 4: Validating regulator-program relationships via PubTator3")
         logger.info("=" * 60)
         
-        regulator_data = load_regulator_data(Path(args.regulator_file))
+        regulator_data = load_regulator_data(
+            Path(args.regulator_file),
+            significance_threshold=args.regulator_significance_threshold,
+        )
         
         for pid in program_ids:
             # Use all 300 genes for STRING validation (not just drivers)
@@ -1470,7 +1491,12 @@ def main():
             if args.all_significant:
                 logger.info(f"[Program {pid}] Validating ALL significant regulators against {len(program_genes)} program genes...")
             else:
-                logger.info(f"[Program {pid}] Validating top {args.top_regulators} positive + negative regulators against {len(program_genes)} program genes...")
+                top_pos = args.top_positive_regulators or args.top_regulators
+                top_neg = args.top_negative_regulators or args.top_regulators
+                logger.info(
+                    f"[Program {pid}] Validating top {top_pos} positive + "
+                    f"{top_neg} negative regulators against {len(program_genes)} program genes..."
+                )
             
             validation_result = validate_program_regulators(
                 program_id=pid,
@@ -1478,6 +1504,8 @@ def main():
                 program_genes=program_genes,
                 keyword=args.keyword,
                 top_n_regulators=args.top_regulators,
+                top_n_positive_regulators=args.top_positive_regulators,
+                top_n_negative_regulators=args.top_negative_regulators,
                 max_pmids_per_regulator=args.regulator_pmids,
                 use_all_significant=args.all_significant,
                 max_regulators=args.max_regulators

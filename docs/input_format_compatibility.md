@@ -78,6 +78,28 @@ Cluster,RowID,lfc,qvalue
 Artery,5,1.5,0.001
 ```
 
+### Regulator Result Formats
+
+These all work for regulator/Perturb-seq input:
+
+```csv
+# Format 1: SCEPTRE style
+response_id,grna_target,log_2_fold_change,p_value,significant
+X5,Kdr,-1.2,1e-8,TRUE
+
+# Format 2: Alternative names with adjusted p-value
+program_name,target_gene_names,log2fc,adj_pval
+Program_5,Kdr,-1.2,0.001
+
+# Format 3: Generic program column + raw/adjusted p aliases
+program_id,target_gene,log2_fc,p_val,p_adj
+5,Kdr,-1.2,1e-8,0.001
+```
+
+If `significant` is missing, regulator significance is derived from adjusted p-values
+(`< threshold`, default `0.05`), and falls back to raw p-values when no adjusted
+column is present. Volcano plots prefer adjusted p-values when available.
+
 ## Program ID Formats
 
 The pipeline automatically parses these program identifier formats:

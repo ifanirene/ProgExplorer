@@ -56,6 +56,16 @@ top_unique: 10        # Top unique genes for LLM prompts
 top_enrichment: 3     # Top enrichment terms per category
 genes_per_term: 10    # Genes to show per enrichment term
 
+# Regulator selection parameters
+# Regulator input accepts flexible aliases such as:
+# - program columns: response_id, program_name, program_id, topic
+# - target columns: grna_target, target_gene, target_gene_names
+# - fold change columns: log_2_fold_change, log2fc, log2_fc
+# - p-value columns: p_value, p_val, adj_pval, p_adj, fdr
+top_positive_regulators: 3
+top_negative_regulators: 3
+regulator_significance_threshold: 0.05
+
 # Gene summary settings
 # full_summaries: true  # Fetch full literature-based summaries from Harmonizome HTML
 #                       # (~3x longer, includes PMID references). Default is short API summaries.

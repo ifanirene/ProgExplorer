@@ -29,6 +29,8 @@ During you interaction with the user, if you find anything generalizable, especi
 - Cell-type annotations summary is now generated in pipeline step 1 from `input/celltype/fp_seq2_cnmf_celltype_l2_program_enrichment.csv`; raw file uses canonical names (Large-artery, Cycling artery, etc.), so no name map flag is needed. [Learning and Memory]
 - Pipeline input validation (e.g., cell-type enrichment files) uses non-fatal warnings instead of hard errors, allowing pipelines to continue with imperfect data while logging issues. [Learning and Memory]
 - Program ID extraction supports flexible naming: `Program_X`, `program_X`, `Topic_X`, `topic_X`, `P_X`, `p_X`, `X_X` (regulator files), `ProgramX`, `TopicX`, `XX`, and plain integers - use `extract_program_id()` for consistent parsing. [Learning and Memory]
+- Regulator/Perturb-seq inputs now accept flexible aliases for program IDs (`response_id`, `program_name`, `program_id`, `topic`), targets (`grna_target`, `target_gene`, `target_gene_names`), log2FC (`log_2_fold_change`, `log2fc`, `log2_fc`), and p-values (`p_value`, `p_val`, `adj_pval`, `p_adj`, `fdr`). If `significant` is absent, derive significance from adjusted p-values using `regulator_significance_threshold` (default `0.05`), falling back to raw p-values when needed; volcano plots should prefer adjusted p-values when available. [Learning and Memory]
+- Default configured regulator counts for this repo should remain `3` positive and `3` negative regulators unless a run explicitly overrides them. [Learning and Memory]
 
 ## Environment Management
 - conda activate /Volumes/IF_PHAGE/conda_envs/perturb2 and use it for python tasks.

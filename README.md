@@ -94,7 +94,7 @@ The pipeline requires 3 input files. **Column names are case-insensitive** and s
 |------|------------------|-------|
 | **Gene loading** | `Name` (gene symbol), `Score` (loading/weight), `program_id` (topic ID) | Required. Your cNMF/NMF output. Column names flexible: `Gene`/`gene_name`, `Loading`/`Weight`, `RowID`/`topic` all work |
 | **Cell-type enrichment** | `cell_type`, `program`, `log2_fc`, `fdr` | Optional. From scanpy, Seurat, or similar. Alternatives: `cluster`, `topic`, `lfc`, `p_adj` |
-| **Regulator file** | `grna_target`, `log_2_fold_change`, `p_value`, `significant` | Optional. SCEPTRE or Perturb-seq results. Used for volcano plots and mechanistic analysis |
+| **Regulator file** | Program column (`response_id`, `program_name`, `program_id`, `topic`), target column (`grna_target`, `target_gene`, `target_gene_names`), log2FC column (`log_2_fold_change`, `log2fc`, `log2_fc`), and p-value column (`p_value`, `p_val`, `adj_pval`, `p_adj`, `fdr`) | Optional. SCEPTRE or Perturb-seq results. `significant` is used if present; otherwise significance defaults to adjusted p-value `< 0.05` (configurable) and falls back to raw p-value when no adjusted column exists. Volcano plots prefer adjusted p-values when available. |
 
 **Validation**: Check example files in `input/` directory match your format. Test with `--topics 5,6,8` first to catch format issues quickly.
 
@@ -122,6 +122,9 @@ keyword: '(endothelial OR endothelium)'  # PubMed search keyword for your tissue
 # LLM prompt context (shown in the prompt header)
 annotation_role: vascular biologist
 annotation_context: 'a gene program extracted from single-cell Perturb-seq of mouse brain endothelial cells (ECs)'
+top_positive_regulators: 3
+top_negative_regulators: 3
+regulator_significance_threshold: 0.05
 
 llm_backend: anthropic  # "anthropic" (default) or "vertex"
 llm_wait: true          # true = wait for completion, false = async (resume later)

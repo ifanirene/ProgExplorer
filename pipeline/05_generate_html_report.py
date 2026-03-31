@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from markdown import markdown
+from column_mapper import standardize_regulator_results
 
 PRIORITY_GENES = [
     "Hif1a", "Epas1", "Arnt", "Fzd4", "Fzd6", "Idh2", "Mdh2", "Ogdh",
@@ -67,6 +68,7 @@ def generate_report(
     volcano_csv: str | None,
     gene_loading_csv: str,
     output_html: str,
+    regulator_significance_threshold: float = 0.05,
 ):
     """Generate Design A: Scientific Minimal HTML report."""
     
@@ -74,13 +76,20 @@ def generate_report(
     summary_df = pd.read_csv(summary_csv)
     volcano_df = None
     if volcano_csv and os.path.exists(volcano_csv):
-        volcano_df = pd.read_csv(volcano_csv)
+        volcano_df = standardize_regulator_results(
+            pd.read_csv(volcano_csv),
+            significance_threshold=regulator_significance_threshold,
+        )
     
     # Process volcano data by program
     volcano_by_program = {}
     if volcano_df is not None:
-        volcano_df['program_id'] = volcano_df['response_id'].str.replace('^X', '', regex=True).astype(int)
-        volcano_df['neg_log10_pvalue'] = -np.log10(volcano_df['p_value'].replace(0, 1e-300))
+        pvalue_col = (
+            'adj_p_value'
+            if 'adj_p_value' in volcano_df.columns and not volcano_df['adj_p_value'].isna().all()
+            else 'p_value'
+        )
+        volcano_df['neg_log10_pvalue'] = -np.log10(volcano_df[pvalue_col].replace(0, 1e-300))
         volcano_df.loc[np.isinf(volcano_df['neg_log10_pvalue']), 'neg_log10_pvalue'] = 300
         
         for tid, group in volcano_df.groupby('program_id'):
@@ -653,6 +662,12 @@ if __name__ == '__main__':
     parser.add_argument("--volcano-csv")
     parser.add_argument("--gene-loading-csv")
     parser.add_argument("--output-html")
+    parser.add_argument(
+        "--regulator-significance-threshold",
+        type=float,
+        default=0.05,
+        help="Adjusted p-value threshold used when the regulator table has no explicit significance column",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -672,5 +687,8 @@ if __name__ == '__main__':
 
     generate_report(
         args.summary_csv, args.annotations_dir, args.enrichment_dir,
-        args.volcano_csv, args.gene_loading_csv, args.output_html
+        args.volcano_csv,
+        args.gene_loading_csv,
+        args.output_html,
+        regulator_significance_threshold=args.regulator_significance_threshold,
     )

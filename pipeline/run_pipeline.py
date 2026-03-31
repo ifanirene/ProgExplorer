@@ -115,6 +115,9 @@ class PipelineConfig:
     top_unique: int = 10
     top_enrichment: int = 3
     genes_per_term: int = 10
+    top_positive_regulators: int = 3
+    top_negative_regulators: int = 3
+    regulator_significance_threshold: float = 0.05
     
     # LLM settings
     llm_backend: str = "anthropic"  # "anthropic" (default) or "vertex"
@@ -193,6 +196,8 @@ class PipelineConfig:
             "annotation_role", "annotation_context",
             "n_top_genes", "top_loading", "top_unique",
             "top_enrichment", "genes_per_term",
+            "top_positive_regulators", "top_negative_regulators",
+            "regulator_significance_threshold",
             "llm_backend", "llm_model", "llm_max_tokens", "llm_wait",
             "vertex_bucket", "full_summaries", "resume"
         }
@@ -291,6 +296,11 @@ def run_step_2_literature_fetch(config: PipelineConfig) -> bool:
     
     if config.regulator_file and config.regulator_file.exists():
         cmd.extend(["--regulator-file", str(config.regulator_file)])
+        cmd.extend([
+            "--top-positive-regulators", str(config.top_positive_regulators),
+            "--top-negative-regulators", str(config.top_negative_regulators),
+            "--regulator-significance-threshold", str(config.regulator_significance_threshold),
+        ])
     if config.topics:
         cmd.extend(["--topics", ",".join(map(str, config.topics))])
     
@@ -347,7 +357,12 @@ def run_step_3a_batch_prepare(config: PipelineConfig) -> bool:
         cmd.extend(["--celltype-file", str(celltype_summary)])
     
     if config.regulator_file:
-        cmd.extend(["--regulator-file", str(config.regulator_file)])
+        cmd.extend([
+            "--regulator-file", str(config.regulator_file),
+            "--top-positive-regulators", str(config.top_positive_regulators),
+            "--top-negative-regulators", str(config.top_negative_regulators),
+            "--regulator-significance-threshold", str(config.regulator_significance_threshold),
+        ])
     if config.topics:
         cmd.extend(["--topics", ",".join(map(str, config.topics))])
     
@@ -572,7 +587,10 @@ def run_step_5_html_report(config: PipelineConfig) -> bool:
     ]
     
     if config.regulator_file and config.regulator_file.exists():
-        cmd.extend(["--volcano-csv", str(config.regulator_file)])
+        cmd.extend([
+            "--volcano-csv", str(config.regulator_file),
+            "--regulator-significance-threshold", str(config.regulator_significance_threshold),
+        ])
     
     logger.info(f"Running: {' '.join(cmd)}")
     result = subprocess.run(cmd, capture_output=False)
@@ -935,6 +953,21 @@ Steps:
         ),
     )
     parser.add_argument(
+        "--top-positive-regulators",
+        type=int,
+        help="Number of positive regulators to include per program",
+    )
+    parser.add_argument(
+        "--top-negative-regulators",
+        type=int,
+        help="Number of negative regulators to include per program",
+    )
+    parser.add_argument(
+        "--regulator-significance-threshold",
+        type=float,
+        help="Adjusted p-value threshold used when the regulator file has no 'significant' column",
+    )
+    parser.add_argument(
         "--no-resume",
         action="store_true",
         help="Disable resume/caching (re-query all APIs)"
@@ -970,6 +1003,9 @@ Steps:
             celltype_enrichment=Path(args.celltype_enrichment) if args.celltype_enrichment else None,
             regulator_file=Path(args.regulator_file) if args.regulator_file else None,
             output_dir=Path(args.output_dir),
+            top_positive_regulators=args.top_positive_regulators or 3,
+            top_negative_regulators=args.top_negative_regulators or 3,
+            regulator_significance_threshold=args.regulator_significance_threshold or 0.05,
         )
     
     # Apply CLI overrides
@@ -992,6 +1028,12 @@ Steps:
         config.annotation_role = args.annotation_role
     if args.annotation_context:
         config.annotation_context = args.annotation_context
+    if args.top_positive_regulators is not None:
+        config.top_positive_regulators = args.top_positive_regulators
+    if args.top_negative_regulators is not None:
+        config.top_negative_regulators = args.top_negative_regulators
+    if args.regulator_significance_threshold is not None:
+        config.regulator_significance_threshold = args.regulator_significance_threshold
     if args.no_resume:
         config.resume = False
     if args.wait:

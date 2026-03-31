@@ -44,6 +44,7 @@ from typing import Dict, List, Optional, Tuple, Set, Any
 
 import numpy as np
 import pandas as pd
+from column_mapper import standardize_regulator_results
 
 # Load environment variables from .env file
 try:
@@ -524,7 +525,10 @@ def format_ncbi_context(ncbi_data: Dict[int, Dict[str, Any]], program_id: int, a
     return "\n".join(lines)
 
 
-def load_regulator_data(csv_path: Optional[Path]) -> Dict[int, pd.DataFrame]:
+def load_regulator_data(
+    csv_path: Optional[Path],
+    significance_threshold: float = 0.05,
+) -> Dict[int, pd.DataFrame]:
     """Load significant regulators from SCEPTRE results CSV.
     
     Returns a dict mapping program_id -> DataFrame with columns:
@@ -537,16 +541,18 @@ def load_regulator_data(csv_path: Optional[Path]) -> Dict[int, pd.DataFrame]:
     
     try:
         df = pd.read_csv(csv_path)
-        # Filter to significant results only
+        df = standardize_regulator_results(
+            df, significance_threshold=significance_threshold
+        )
         df = df[df["significant"] == True].copy()
-        
-        # Extract program ID from response_id (e.g., "X20" -> 20)
-        df["program_id"] = df["response_id"].str.replace("X", "").astype(int)  # type: ignore
         
         # Group by program
         result = {}
         for pid, group in df.groupby("program_id"):
-            result[pid] = group[["grna_target", "log_2_fold_change", "p_value"]].copy()
+            keep_cols = ["grna_target", "log_2_fold_change", "p_value", "significant"]
+            if "adj_p_value" in group.columns:
+                keep_cols.append("adj_p_value")
+            result[pid] = group[keep_cols].copy()
         
         logger.info("Loaded regulators for %d programs", len(result))
         return result
@@ -596,10 +602,9 @@ def format_regulator_analysis_context(
     regulator_data: Dict[int, pd.DataFrame],
     ncbi_data: Dict[int, Dict[str, Any]],
     program_id: int,
-    top_n_validated: int = 3,
-    top_n_listed: int = 5,
+    top_positive_regulators: int = 3,
+    top_negative_regulators: int = 3,
     min_score: int = 400,
-    max_regulators_display: int = 10,
 ) -> str:
     """Format comprehensive regulator analysis with compact STRING interactions.
     
@@ -608,7 +613,6 @@ def format_regulator_analysis_context(
     
     Args:
         min_score: Minimum STRING score to display (default 400 = medium confidence)
-        max_regulators_display: Max regulators to show in prompt (default 10 total)
     """
     reg_df = regulator_data.get(program_id)
     ctx = ncbi_data.get(program_id, {})
@@ -618,16 +622,12 @@ def format_regulator_analysis_context(
         return "### Regulator evidence\nNo significant regulators identified from Perturb-seq."
     
     lines = ["### Regulator evidence"]
-    lines.append(f"(Top {max_regulators_display} significant regulators by effect size; STRING-DB interactions shown)")
+    lines.append(
+        f"(Top {top_positive_regulators} activators + "
+        f"{top_negative_regulators} repressors by effect size; "
+        "STRING-DB interactions shown)"
+    )
     lines.append("")
-    
-    # Build lookup for validation data by regulator name
-    validation_by_gene: Dict[str, Dict[str, Any]] = {}
-    if validation:
-        for reg in validation.get("positive_regulators", []):
-            validation_by_gene[reg.get("regulator", "").upper()] = reg
-        for reg in validation.get("negative_regulators", []):
-            validation_by_gene[reg.get("regulator", "").upper()] = reg
     
     def format_compact_interactions(val: Dict[str, Any]) -> str:
         """Format STRING interactions compactly: Target1(score), Target2(score), ..."""
@@ -650,15 +650,8 @@ def format_regulator_analysis_context(
     # Get validated regulators from ncbi_data (includes all significant)
     activators = validation.get("positive_regulators", []) if validation else []
     repressors = validation.get("negative_regulators", []) if validation else []
-    
-    # Limit total regulators displayed (split between activators and repressors)
-    # Prioritize by absolute effect size (already sorted)
-    n_activators = min(len(activators), max_regulators_display // 2 + max_regulators_display % 2)
-    n_repressors = min(len(repressors), max_regulators_display - n_activators)
-    # If fewer activators, give more slots to repressors
-    if len(activators) < n_activators:
-        n_repressors = min(len(repressors), max_regulators_display - len(activators))
-        n_activators = len(activators)
+    n_activators = min(len(activators), top_positive_regulators)
+    n_repressors = min(len(repressors), top_negative_regulators)
     
     # Format activators
     if activators:
@@ -749,6 +742,8 @@ def generate_prompt(
     annotation_role: str,
     annotation_context: str,
     regulator_data: Optional[Dict[int, pd.DataFrame]] = None,
+    top_positive_regulators: int = 3,
+    top_negative_regulators: int = 3,
 ) -> Optional[str]:
     top_loading_genes, unique_genes = select_program_genes(
         gene_df=gene_df,
@@ -783,10 +778,12 @@ def generate_prompt(
     allowed_genes = set(top_loading_genes) | set(unique_genes)
     ncbi_context = format_ncbi_context(ncbi_data, program_id, allowed_genes=allowed_genes)
     
-    # Format comprehensive regulator analysis (Perturb-seq + literature)
-    # Top 3 validated, up to 5 listed total per category
     regulator_analysis = format_regulator_analysis_context(
-        regulator_data or {}, ncbi_data, program_id, top_n_validated=3, top_n_listed=5
+        regulator_data or {},
+        ncbi_data,
+        program_id,
+        top_positive_regulators=top_positive_regulators,
+        top_negative_regulators=top_negative_regulators,
     )
 
     annotation_role = annotation_role or DEFAULT_ANNOTATION_ROLE
@@ -902,7 +899,10 @@ def cmd_prepare(args: argparse.Namespace) -> int:
     celltype_map = load_celltype_annotations(Path(args.celltype_dir), celltype_file)
     enrichment_by_program = prepare_enrichment_mapping(Path(args.enrichment_file))
     ncbi_data = load_ncbi_context(Path(args.ncbi_file) if args.ncbi_file else None)
-    regulator_data = load_regulator_data(Path(args.regulator_file) if args.regulator_file else None)
+    regulator_data = load_regulator_data(
+        Path(args.regulator_file) if args.regulator_file else None,
+        significance_threshold=args.regulator_significance_threshold,
+    )
 
     batch_requests: List[dict] = []
     for program_id in program_ids:
@@ -921,6 +921,8 @@ def cmd_prepare(args: argparse.Namespace) -> int:
             annotation_role=args.annotation_role,
             annotation_context=args.annotation_context,
             regulator_data=regulator_data,
+            top_positive_regulators=args.top_positive_regulators,
+            top_negative_regulators=args.top_negative_regulators,
         )
         if prompt:
             request = {
@@ -1431,7 +1433,25 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument(
             "--regulator-file",
             type=str,
-            help="CSV file with significant regulators (grna_target, log_2_fold_change)",
+            help="CSV file with regulator results",
+        )
+        p.add_argument(
+            "--top-positive-regulators",
+            type=int,
+            default=3,
+            help="Number of positive regulators to include in annotation prompts",
+        )
+        p.add_argument(
+            "--top-negative-regulators",
+            type=int,
+            default=3,
+            help="Number of negative regulators to include in annotation prompts",
+        )
+        p.add_argument(
+            "--regulator-significance-threshold",
+            type=float,
+            default=0.05,
+            help="Adjusted p-value threshold used when the regulator file has no 'significant' column",
         )
 
     p_prepare = subparsers.add_parser("prepare", help="Build the batch request JSON only")
